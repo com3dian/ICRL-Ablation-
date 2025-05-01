@@ -21,7 +21,17 @@ from openai import OpenAI
 # Number of characters used to compute the reward.
 num_char = 200
 num_weak_demo = 3000
-rejection_sampling = False
+
+rejection_sampling = 0
+ICRL = 0
+exploration_only = 0
+exploitation_only = 0
+no_reward_exploration = 1
+
+no_reward = 1
+zero_reward = 0
+
+
 api_eval = True
 
 eval_prompt = "Use numbers and basic arithmetic operations (+ - * /) to obtain 24. Given an input and an answer, give a judgement (sure/impossible) if the answer is correct, i.e. it uses each input exactly once and no other numbers, and reach 24."
@@ -43,8 +53,11 @@ exploitation_instruction = "Instruction: You will be given multiple <attempt>…
 
 
 exploration_instruction = "Instruction: Examine all the `<attempt>…</attempt>` examples, each showing a candidate Response and its Reward. Provide a response that is different from every single one of the previous attempts demonstrated in the context, while making sure it correctly follows the task instruction, and put it in `<answer>**Response** Step1: ... Step2: ... Step3: ... **Answer**: <math operations of the 4 input numbers = 24></answer>` format."
-exploitation_instruction = "Instruction: You will be given multiple <attempt>…</attempt> entries. Each entry contains: •A candidate Response •Its Format Reward and Accuracy Reward  Your task: make the best educated guess based on the high reward attempts to produce a more correct response that can achieve a higher reward, while making sure it correctly follows the task instruction, and put it in `<answer>**Response** Step1: ... Step2: ... Step3: ... (Correct/Incorrect.) **Answer**: <math operations of the 4 input numbers = 24></answer>` format."
+# exploitation_instruction = "Instruction: You will be given multiple <attempt>…</attempt> entries. Each entry contains: •A candidate Response •Its Format Reward and Accuracy Reward  Your task: make the best educated guess based on the high reward attempts to produce a more correct response that can achieve a higher reward, while making sure it correctly follows the task instruction, and put it in `<answer>**Response** Step1: ... Step2: ... Step3: ... (Correct/Incorrect.) **Answer**: <math operations of the 4 input numbers = 24></answer>` format."
 
+exploitation_instruction = "Instruction: You will be given multiple <attempt>…</attempt> entries. Each entry contains: •A candidate Response •Its Format Reward and Accuracy Reward  Your task: make the best educated guess based on the high reward attempts to produce a more correct response that can achieve a higher reward, while making sure it correctly follows the task instruction, and put it in `<answer>**Response** Step1: ... Step2: ... Step3: ... **Answer**: <math operations of the 4 input numbers = 24></answer>` format."
+
+no_reward_exploration_instruction = "Instruction: Examine all the `<attempt>…</attempt>` examples, each showing a candidate Response. Provide a response that is different from every single one of the previous attempts demonstrated in the context, while making sure it correctly follows the task instruction, and put it in `<answer>**Response** Step1: ... Step2: ... Step3: ... **Answer**: <math operations of the 4 input numbers = 24></answer>` format."
 # use the least common high reward attempt as your starting point to make small edits that can achieve a higher reward, while making sure it correctly follows the task instruction, and put it in `**Response** Steps: ... **Answer**: ...` format.
 
 
@@ -104,7 +117,7 @@ def main():
     model_name = "gpt-4.1-mini"
     # model_name = "gpt-4o-mini"
     # model_name = "gpt-4.1-nano"
-    with ThreadPoolExecutor(max_workers=12) as pool:
+    with ThreadPoolExecutor(max_workers=20) as pool:
         api_outputs = list(pool.map(
             lambda p: client.responses.create(model=model_name, input=p).output_text,
             batch_prompts
@@ -152,10 +165,10 @@ def evaluate_checkpoint(
     dataset_name='tatsu-lab/alpaca',
     split="test",
     max_eval_samples=45,
-    n=200,
+    n=100,
     max_new_tokens=1000
 ):
-    num_samples = 12
+    num_samples = 100
     task = get_task("game24")
 
 
@@ -248,7 +261,8 @@ def evaluate_checkpoint(
                 # prompt += f"**Task**: {task_prompt_cot}"
                 prompt += f"**Prompt**: Input: {sample['question']}\n"
                 # prompt += f"**Format Reward**: 0.00\n"
-                prompt += f"**Reward**: 0.00\n"
+                if not no_reward:
+                    prompt += f"**Reward**: 0.00\n"
                 
             else:
                 if not rejection_sampling: 
@@ -262,15 +276,30 @@ def evaluate_checkpoint(
                         # Steps: ??
                         prompt += "" + weak_demo['answer'][:] + "\n"
                         # prompt += f"**Format Reward**: {weak_demo['format_reward']}\n"
-                        prompt += f"**Reward**: {weak_demo['gpt_eval_reward']}\n"
+                        
+                        if not no_reward: 
+                            
+                            if zero_reward: 
+                                prompt += f"**Reward**: {0.00}\n"
+                            else:
+                                prompt += f"**Reward**: {weak_demo['gpt_eval_reward']}\n"
+                            
                         prompt += "</attempt>"
                     
                     prompt += "<instructions>\n"
                     # may need to adjust the one_shot_prompt demonstrations once we start explore and exploit.
-                    if round_idx % 2 == 0:
+                    
+                    if ICRL: 
+                        if round_idx % 2 == 0:
+                            prompt += exploration_instruction
+                        else:
+                            prompt += exploitation_instruction
+                    if exploration_only:
                         prompt += exploration_instruction
-                    else:
+                    if exploitation_only:
                         prompt += exploitation_instruction
+                    if no_reward_exploration: 
+                        prompt += no_reward_exploration_instruction
                         
                         
                     # prompt += " Only make one attempt, and put your answer in `<answer>**Response** Step1: ... (left: ...) Step2: ... (left: ...) Step3: ... (left: ...) **Answer**: <math operations of the 4 input numbers.></answer>` format. Whether the Answer is correct or incorrect, do not try again. \n"
@@ -459,7 +488,6 @@ Add up those step‐scores and return **Answer**: <sum of likeliness scores>."""
                 format_reward_list.append(-30.0)
 
         #     sampling_params_eval = SamplingParams(temperature=0.0, top_p=1.0, max_tokens=64)
-
         eval_model_name = "gpt-4.1-mini"
             
         with ThreadPoolExecutor(max_workers=12) as pool:
@@ -659,10 +687,16 @@ Add up those step‐scores and return **Answer**: <sum of likeliness scores>."""
 
             # Save the results to files.
             task = 'alpaca_game24_api'
+            
+            this_time_change = "ICRL_zero_reward_"
+            
+            
+            
             if rejection_sampling:
-                this_time_change = "rejection_simple_nano_48"
+                this_time_change += "rejection_simple_nano_48"
             else:
-                this_time_change = "12_mini"
+                this_time_change += "100_mini"
+            
 
             this_time_change += f"_evalnum_{max_eval_samples}"
             run = f"{this_time_change}_n_{n}"
