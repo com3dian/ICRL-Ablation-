@@ -107,6 +107,14 @@ class SciWorldEnv(BaseEnv):
         assert action is not None
         return action
     
+    def _check_max_steps(self, observation: str) -> str:
+        if self.state.steps >= self.max_steps:
+            self.state.finished = True
+            self.state.success = False
+            self.state.terminate_reason = "max_steps"
+            observation += "\nTask Failed. You have exceeded the maximum number of steps."
+        return observation
+    
     def step(self, llm_output: str) -> Tuple[str, State]:
         self.state.history.append({
             "role": "assistant",
@@ -121,12 +129,10 @@ class SciWorldEnv(BaseEnv):
                 "role": "user",
                 "content": observation,
             })
+            self.state.invalid_action_count += 1
             self.state.steps += 1
             self.state.reward = 0
-            if self.state.steps >= self.max_steps:
-                self.state.finished = True
-                self.state.success = False
-                self.state.terminate_reason = "max_steps"
+            observation = self._check_max_steps(observation)
             return observation, self.state
         try:
             observation, _, done, info = self.env.step(action)
@@ -138,6 +144,7 @@ class SciWorldEnv(BaseEnv):
             # observation = f"Observation:\n{observation}\n\nAvailable Actions:\n{available_actions}"
         except AssertionError:
             observation = 'Observation: Invalid action!'
+            self.state.invalid_action_count += 1
             done = False
 
         self.state.history.append({
@@ -146,16 +153,12 @@ class SciWorldEnv(BaseEnv):
         })
 
         self.state.steps += 1
-        if self.state.steps >= self.max_steps:
-            self.state.finished = True
-            self.state.success = False
-            self.state.terminate_reason = "max_steps"
-
+        observation = self._check_max_steps(observation)
         if done:
             self.state.finished = True
             self.state.success = True
             self.state.terminate_reason = "success"
-            # self.state.reward = reward
+            observation += "\nTask Successfully Completed."
 
         return observation, self.state
 

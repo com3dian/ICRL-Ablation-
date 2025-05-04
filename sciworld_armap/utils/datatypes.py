@@ -34,6 +34,7 @@ class State:
         self.terminate_reason: str = terminate_reason
         self.error: Optional[str] = None
         self.steps = 0
+        self.invalid_action_count = 0
 
     @classmethod
     def load_json(cls, json_dict: Dict[str, Any]):

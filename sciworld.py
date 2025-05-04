@@ -133,7 +133,6 @@ dunk OBJ into OBJ: dunk a container into a liquid
 inventory: list agent's inventory
 wait: task no action for 10 steps  
 wait1: task no action for a step
-task complete: you think you have completed the task
 """,
 
     # "no_reward_exploration_instruction": "Instruction: Examine all the `<attempt>…</attempt>` examples, each showing a candidate Response. Provide a response that is different from every single one of the previous attempts demonstrated in the context, while making sure it correctly follows the task instruction, and put it in `<answer>**Response** Step1: ... Step2: ... Step3: ... **Answer**: <math operations of the 4 input numbers = 24></answer>` format.",
@@ -227,51 +226,6 @@ def load_envs(num_samples, env_step_limit):
     
     print(f"Created {len(envs)} ScienceWorld environments with random tasks")
     return envs
-
-
-def build_prompt(env, round_idx, config, first_round=False):
-    prompt = ""
-    # prompt += f"{config.task_prompt_cot}\n"
-    
-    # Add previous weak demonstrations if any
-    # for weak_demo in env["weak_demos"][-config.num_weak_demo:]:
-    #     prompt += "<attempt>\n"
-    #     prompt += f"**Prompt**: Input: {weak_demo['prompt']}\n"
-    #     prompt += "" + weak_demo['answer'][:] + "\n"
-        
-    #     if not config.no_reward: 
-    #         if config.zero_reward: 
-    #             prompt += "**Reward**: 0.00\n"
-    #         else:
-    #             prompt += f"**Reward**: {weak_demo['gpt_eval_reward']}\n"
-        
-    #     prompt += "</attempt>"
-    
-    # prompt += "<Instructions>"
-    
-    # Add appropriate instruction based on config
-    # if first_round:
-        # prompt += config.first_round_instruction
-    # elif config.icrl_mode == "ICRL":
-        # if round_idx % 2 == 0:
-            # prompt += config.exploration_instruction
-        # else:
-            # prompt += config.exploitation_instruction
-    # elif config.icrl_mode == "EXPLORATION_ONLY":
-    #     prompt += config.exploration_instruction
-    # elif config.icrl_mode == "EXPLOITATION_ONLY":
-    #     prompt += config.exploitation_instruction
-    # elif config.icrl_mode == "NO_REWARD_EXPLORATION":
-    #     prompt += config.no_reward_exploration_instruction
-    
-    # prompt += "</instructions>\n\n"
-    # 
-    # prompt += env.env.taskdescription()
-# 
-    # prompt += '\n' + config.available_actions
-    
-
-    return prompt
 
 def extract_action(generated_text):
     try:
