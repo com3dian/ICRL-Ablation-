@@ -4,84 +4,73 @@ import re
 import json
 import sys
 import numpy as np
-import argparse
 from concurrent.futures import ThreadPoolExecutor
-from enum import Enum, auto
-import random
 from pathlib import Path
-import pdb
-from functools import partial
 import anyio
-from openai import OpenAI, AsyncOpenAI
+from openai import AsyncOpenAI
 from collections import defaultdict
 from datetime import datetime
+from dataclasses import dataclass
+from typing import Literal
+from scienceworld import ScienceWorldEnv as ScienceWorldEnvBase
+from sciworld_armap.utils.replace_sciworld_score import sciworld_monkey_patch
+from sciworld_armap.envs.sciworld_env import SciWorldEnv
+from sciworld_armap.tasks.sciworld import SciWorldTask
+from omegaconf import OmegaConf
+
 # Add the parent directory to the Python path to find eval_agent
 script_path = Path(__file__).resolve()
 parent_dir = str(script_path.parent.parent)
 if parent_dir not in sys.path:
     sys.path.insert(0, parent_dir)
 
-from omegaconf import OmegaConf, DictConfig
-
-# Define base path for all directory references
 base_path = os.getcwd()
 
-# Keep only imports that are actually used
-from sympy import sympify
-from datasets import load_dataset
-from typing import Literal
-from scienceworld import ScienceWorldEnv as ScienceWorldEnvBase
-import uuid
-# Import eval_agent modules
-from sciworld_armap.utils.replace_sciworld_score import sciworld_monkey_patch
-from sciworld_armap.envs.sciworld_env import SciWorldEnv
-from sciworld_armap.tasks.sciworld import SciWorldTask
-
-# Apply the monkey patch for ScienceWorld
 sciworld_monkey_patch()
 
-# Default configuration
-DEFAULT_CONFIG = {
-    "sw_output_path": "ICL/sw/icrl",  # ScienceWorld output path
+@dataclass
+class SciWorldConfig:
+    sw_output_path: str = "ICL/sw/"  # ScienceWorld output path
+    
     # Experiment modes
-    "icrl_mode": "icrl",  # Literal["icrl", "exploration_only", "exploitation_only", "no_reward_exploration", "rejection_sampling"],
-    # "no_reward": False,
-    # "zero_reward": False,
-    "debug_run": False,
+    icrl_mode: Literal["icrl", "exploration_only", "exploitation_only", "no_reward_exploration", "rejection_sampling"] = "icrl"
+    # no_reward: bool = False
+    # zero_reward: bool = False
+    debug_run: bool = False
     
     # Mode parameter (special handling)
-    # "algorithm": "ICRL", # Literal["demo", "ICRL"] 
+    # algorithm: Literal["demo", "ICRL"] = "ICRL"
     
     # Parameters
-    # "num_char": 200,
-    # "num_weak_demo": 3000,
-    "num_initial_attempts": 2,
-    # "api_eval": True,
-    "max_env_steps": 15,
+    # num_char: int = 200
+    # num_weak_demo: int = 3000
+    num_initial_attempts: int = 2
+    # api_eval: bool = True
+    max_env_steps: int = 15
     
     # Model configuration
-    "model_name": "gpt-4.1-mini",
-    # "model_name": "gpt-4.1-nano-2025-04-14",
-    # "judge_model_name": "gpt-4.1-mini",
-    # "checkpoint_path": "google/gemma-7b-it",  # Only for reference
-    # "base_model_id": "google/gemma-7b-it",    # For reference and tokenizer loading
+    model_name: str = "gpt-4.1-mini"
+    # model_name: str = "gpt-4.1-nano-2025-04-14"
+    # judge_model_name: str = "gpt-4.1-mini"
+    # checkpoint_path: str = "google/gemma-7b-it"  # Only for reference
+    # base_model_id: str = "google/gemma-7b-it"    # For reference and tokenizer loading
     
     # Dataset configuration
-    # "dataset_name": "game24",
-    # "split": "test",
-    "max_eval_samples": 45,
-    "num_envs": 4,
+    # dataset_name: str = "game24"
+    # split: str = "test"
+    max_eval_samples: int = 45
+    num_envs: int = 4
     
     # Evaluation parameters
-    "rounds": 10,
-    # "max_new_tokens": 1000,
-    # "env_step_limit": 100,
+    rounds: int = 10
+    # max_new_tokens: int = 1000
+    # env_step_limit: int = 100
     
     # OpenAI API key
-    "api_key": "sk-C8z62BDhmo4EW1bqOn2TTmdFR29ocUeZXLExkdmGS1T3BlbkFJQcA3zOug-aNTm98KC0Wjsv549b3OgxEGn9TKJknXMA",
+    api_key: str = "sk-C8z62BDhmo4EW1bqOn2TTmdFR29ocUeZXLExkdmGS1T3BlbkFJQcA3zOug-aNTm98KC0Wjsv549b3OgxEGn9TKJknXMA"
 
     # Prompt templates
-    "task_prompt_cot": """
+    task_prompt_cot: str = """
 You are a helpful assistant to do some scientific experiment in an environment.
 
 <Environment description>
@@ -92,27 +81,27 @@ You should explore the environment and find the items you need to complete the e
 FOCUS is a extremely critical action that can be only used the number of times 'focus' is mentioned in the task description. Using it more than that or inappropiately (such as on a wrong object) will terminate the session and the task WILL FAIL.
 
 </Environment description>
-""",
+"""
     
-    "exploration_instruction": """
+    exploration_instruction: str = """
 Your location and the environment is reset now. It's your turn.
 Look at the previous attempts and try to construct a plan that is different from every single one of the previous attempts, while making sure it is feasible as well. 
 After thinking, make sure to write your action in the "Action: single_action" format. It is parsed by a script.
-""",
+"""
 
-    "exploitation_instruction": """
+    exploitation_instruction: str = """
 Your location and the environment is reset now. It's your turn.
 Based on the previous high reward attempts, try to construct a higher scoring plan while making sure it is feasible as well. 
 After thinking, make sure to write your action in the "Action: single_action" format. It is parsed by a script.
-""",
+"""
 
-    "neutral_round_instruction": """
+    neutral_round_instruction: str = """
 Your location and the environment is reset now. It's your turn.
 Take your time to think and then take the next action.
 After thinking, make sure to write your action in the "Action: single_action" format. It is parsed by a script.
-""",
+"""
 
-    "available_actions": """
+    available_actions: str = """
 The available actions are: (OBJ is placeholder for object name so for example "Action: look at picture" is valid)
 open OBJ: open a container  
 close OBJ: close a container  
@@ -137,11 +126,11 @@ dunk OBJ into OBJ: dunk a container into a liquid
 inventory: list agent's inventory
 wait: task no action for 10 steps  
 wait1: task no action for a step
-""",
+"""
 
-    # "no_reward_exploration_instruction": "Instruction: Examine all the `<attempt>…</attempt>` examples, each showing a candidate Response. Provide a response that is different from every single one of the previous attempts demonstrated in the context, while making sure it correctly follows the task instruction, and put it in `<answer>**Response** Step1: ... Step2: ... Step3: ... **Answer**: <math operations of the 4 input numbers = 24></answer>` format.",
+    # no_reward_exploration_instruction: str = "Instruction: Examine all the `<attempt>…</attempt>` examples, each showing a candidate Response. Provide a response that is different from every single one of the previous attempts demonstrated in the context, while making sure it correctly follows the task instruction, and put it in `<answer>**Response** Step1: ... Step2: ... Step3: ... **Answer**: <math operations of the 4 input numbers = 24></answer>` format."
 
-#     "evaluation_prompt_template": """Please evaluate whether the proposed solution to the 24‐game is correct for this input:
+    # evaluation_prompt_template: str = """Please evaluate whether the proposed solution to the 24‐game is correct for this input:
 # Question: {sample_question}
 # Solution: {full_answer}
 
@@ -153,28 +142,27 @@ wait1: task no action for a step
 # - If the step is invalid, such as using numbers outside of the 4 input numbers or not using all numbers at the last step, the score is 0. 
 
 # Add up those step‐scores and return **Answer**: <sum of likeliness scores>."""
-}
 
 def parse_args():
     """
     Parse command line arguments and create a configuration object using OmegaConf
     
     Returns:
-        tuple: (config, run_mode) where config is the OmegaConf object and run_mode indicates what to run
+        SciWorldConfig: The configuration object with all parameters
     """
     # Parse command line arguments
-    config = OmegaConf.create(DEFAULT_CONFIG)  # Start with code defaults
+    default_config = OmegaConf.structured(SciWorldConfig)  # Start with code defaults
 
     cli_conf = OmegaConf.from_cli()
 
     # CLI arguments always have highest priority
-    config = OmegaConf.merge(config, cli_conf)
+    config = OmegaConf.merge(default_config, cli_conf)
     
     config.task_prompt_cot = config.task_prompt_cot.format(available_actions=config.available_actions)
 
     # Create a timestamped output path
     timestamp = datetime.now().strftime("%Y%m%d_%H%M")
-    config.sw_output_path = Path(config.sw_output_path) / timestamp
+    config.sw_output_path = Path(config.sw_output_path) / config.icrl_mode / timestamp
     
     # Apply debug mode settings if enabled
     if config.debug_run:
@@ -523,12 +511,10 @@ async def run_evaluation(config):
                     for attempt_idx, attempt in enumerate(attempts):
                         messages.append({"role": "user", "content": f"Attempt {attempt_idx+1}:"})
                         messages.extend(attempt)
-                    if not config.icrl_mode == "icrl":
+                    if config.icrl_mode == "icrl":
                         messages.append({"role": "user", "content": f"""<Instructions>\n{config.exploration_instruction if round_idx%2==0 else config.exploitation_instruction}\n</Instructions>\n{env.env.taskdescription()}"""})
                     elif config.icrl_mode == "rejection_sampling":
                         messages.append({"role": "user", "content": f"""<Instructions>\n{config.neutral_round_instruction}\n</Instructions>\n{env.env.taskdescription()}"""})
-                    else:
-                        assert False, "Invalid ICRL mode"
                     messages = merge_same_role_messages(messages)
                     attempt.append({"role": "user", "content": env.env.taskdescription()})
                     first_round = False
