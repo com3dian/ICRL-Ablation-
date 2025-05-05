@@ -108,7 +108,7 @@ class SciWorldEnv(BaseEnv):
         if len(valid_actions_list) == 0:
             # check "Ambiguous request in observation"
             if "Ambiguous request" in self.state.history[-1]['content']:
-                valid_actions_list = [str(x) for x in range(len(self.state.history[-1]['content'].split('\n')[1:]))]
+                valid_actions_list = [str(x) for x in range(len(self.state.history[-2]['content'].split('\n')[1:]))]
 
         if len(valid_actions_list) > 0:
             # Time how long it takes to map generated next_action to one of the valid_actions?
