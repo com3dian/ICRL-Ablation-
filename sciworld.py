@@ -498,7 +498,7 @@ async def run_evaluation(config):
 
     # print reward average for each sample
     for i in range(config.num_envs):
-        print(f"Sample {i+1} reward average: {np.mean(data[i]['rewards']):.2%}")
+        print(f"Sample {i+1} reward average: {np.mean([a for b in data[i]['rewards'] for a in b]):.2%}")
     
     # main loop
     print(f"Processing {config.num_envs} environments in {config.rounds} rounds...")
@@ -572,12 +572,13 @@ async def run_evaluation(config):
             data[i]['attempts'].append(api_outputs[i])
             data[i]['rewards'].append(envs[i].state.reward_history)
             
+        with open(f"{base_path}/{config.sw_output_path}/sciworld_data_{round_idx}.json", "w") as f:
+            json.dump(data, f)
+
         # print reward average for each sample
         for i in range(config.num_envs):
             print(f"Sample {i+1} reward average: {np.mean(data[i]['rewards'][-1]):.2%}")
         
-        with open(f"{base_path}/{config.sw_output_path}/sciworld_data_{round_idx}.json", "w") as f:
-            json.dump(data, f)
         
         # Build prompts for each sample
         # batch_prompts = []
