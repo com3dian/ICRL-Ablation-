@@ -46,7 +46,7 @@ raw_icl = [
     [
         {
             "role": "user",
-            "content": "Your task is to use chemistry to create green paint. When you are done, focus on the green paint."
+            "content": "Task Description:\nYour task is to use chemistry to create green paint. When you are done, focus on the green paint."
         },
         {
             "role": "assistant",
@@ -106,19 +106,15 @@ raw_icl = [
 class BaseEnv(ABC):
     def __init__(
         self,
-        instruction_path: str,
-        icl_path: str,
-        icl_format: str = "first",
-        max_steps: int = 10,
         **kwargs,
     ):
         # with open(instruction_path) as f:
         #     self.instruction = f.read()
-        self.instruction = instr
+        # self.instruction = instr
         # self.raw_icl = json.load(open(icl_path))
-        self.raw_icl = raw_icl
-        self.icl_format = icl_format
-        self.max_steps = max_steps
+        # self.raw_icl = raw_icl
+        # self.icl_format = icl_format
+        ...
 
 
     @abstractmethod

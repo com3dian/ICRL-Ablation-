@@ -58,6 +58,7 @@ class SciWorldEnv(BaseEnv):
         task: SciWorldTask,
         env: ScienceWorldEnv,
         gold_path: bool,
+        max_env_steps: int,
         **kwargs,
     ):
         super().__init__(**kwargs)
@@ -66,6 +67,7 @@ class SciWorldEnv(BaseEnv):
         self.max_steps_dict = max_steps_dict
         self.gold_path = gold_path
         self.state = State()
+        self.max_steps = max_env_steps
         self.sent_transformer_model = SentenceTransformer('sentence-transformers/all-MiniLM-L6-v2', device="cpu")
     
     def parse_action(self, llm_output: str) -> str:
@@ -143,6 +145,7 @@ class SciWorldEnv(BaseEnv):
             self.state.invalid_action_count += 1
             self.state.steps += 1
             self.state.reward = 0
+            self.state.reward_history.append(0)
             observation = self._check_max_steps(observation)
             return observation, self.state
         
@@ -152,9 +155,9 @@ class SciWorldEnv(BaseEnv):
         reward = info['raw_score']
         self.state.valid_actions_list = info['valid']
         observation = f"Observation: {observation}"
-        if self.state.reward is None or reward > self.state.reward:
-            self.state.reward = reward
-
+        # if self.state.reward is None or reward > self.state.reward:
+        self.state.reward = reward
+        self.state.reward_history.append(reward)
         self.state.history.append({
             "role": "user",
             "content": f"{observation}",
@@ -186,7 +189,6 @@ class SciWorldEnv(BaseEnv):
             })
             self.state.invalid_action_count += 1
             self.state.steps += 1
-            self.state.reward = 0
             observation = self._check_max_steps(observation)
             return observation, self.state
         try:
@@ -194,12 +196,10 @@ class SciWorldEnv(BaseEnv):
             observation, _, done, info = self.env.step(action)
             reward = info['raw_score']
             observation = f"Observation: {observation}"
-            if self.state.reward is None or reward > self.state.reward:
-                self.state.reward = reward
             # available_actions = self.env.get_available_actions()
             # observation = f"Observation:\n{observation}\n\nAvailable Actions:\n{available_actions}"
         except AssertionError:
-            observation = 'Observation: Invalid action!'
+            observation = f'Observation: Invalid action! Your action: {action}'
             self.state.invalid_action_count += 1
             done = False
 
@@ -221,7 +221,10 @@ class SciWorldEnv(BaseEnv):
 
     def reset(self) -> Tuple[str, State]:
         self.state = State()
-        self.max_steps = self.max_steps_dict[self.task.sub_task_name]
+        if self.max_steps == -1:
+            self.max_steps = self.max_steps_dict[self.task.sub_task_name]
+        else:
+            self.max_steps = self.max_steps
         self.env.load(self.task.sub_task_name, self.task.variation_idx, simplificationStr="easy", generateGoldPath=self.gold_path)
         obs, info = self.env.reset()
         # ! NOTE need to revise when sampling for data-fake or test-set generation !! NOTE

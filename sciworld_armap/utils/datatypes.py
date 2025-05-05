@@ -35,7 +35,7 @@ class State:
         self.error: Optional[str] = None
         self.steps = 0
         self.invalid_action_count = 0
-
+        self.reward_history = []
     @classmethod
     def load_json(cls, json_dict: Dict[str, Any]):
         state = cls()
