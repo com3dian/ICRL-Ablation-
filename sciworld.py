@@ -14,9 +14,11 @@ from dataclasses import dataclass
 from typing import Literal
 from scienceworld import ScienceWorldEnv as ScienceWorldEnvBase
 from sciworld_armap.utils.replace_sciworld_score import sciworld_monkey_patch
+sciworld_monkey_patch()
 from sciworld_armap.envs.sciworld_env import SciWorldEnv
 from sciworld_armap.tasks.sciworld import SciWorldTask
 from omegaconf import OmegaConf
+from enum import Enum
 
 # Add the parent directory to the Python path to find eval_agent
 script_path = Path(__file__).resolve()
@@ -26,14 +28,17 @@ if parent_dir not in sys.path:
 
 base_path = os.getcwd()
 
-sciworld_monkey_patch()
+
+class Ablation(Enum):
+    ICRL = "icrl"
+    REJECTION_SAMPLING = "rejection_sampling"
 
 @dataclass
 class SciWorldConfig:
     sw_output_path: str = "ICL/sw/"  # ScienceWorld output path
     
     # Experiment modes
-    icrl_mode: Literal["icrl", "exploration_only", "exploitation_only", "no_reward_exploration", "rejection_sampling"] = "icrl"
+    icrl_mode: Ablation = Ablation.ICRL
     # no_reward: bool = False
     # zero_reward: bool = False
     debug_run: bool = False
@@ -162,7 +167,7 @@ def parse_args():
 
     # Create a timestamped output path
     timestamp = datetime.now().strftime("%Y%m%d_%H%M")
-    config.sw_output_path = Path(config.sw_output_path) / config.icrl_mode / timestamp
+    config.sw_output_path = Path(config.sw_output_path) / config.icrl_mode.value / timestamp
     
     # Apply debug mode settings if enabled
     if config.debug_run:
