@@ -9,43 +9,15 @@ from ..envs import BaseEnv
 from ..tasks import SciWorldTask
 # from eval_agent.prompt import prompt_with_icl
 from ..utils.datatypes import State
-
-
+from ..utils.clin_utils import get_best_matched_action_using_sent_transformer
+from sentence_transformers import SentenceTransformer
 logger = logging.getLogger("agent_frame")
 
 task_all = []
 # randomly selected intents for data generation stage 1
 import random
-# file_path = '/nobackup/users/zfchen/cdl/ScienceWorld_Planning/eval_agent/data/sciworld/test_indices.json'
 import pdb
 
-file_path = "/nobackup/users/zfchen/cdl/ScienceWorld_Planning/eval_agent/data/sciworld/dev_sampled_50.json"
-# max_steps_dict = {
-#     "task-1-boil": 100,
-#     "task-1-change-the-state-of-matter-of": 80,
-#     "task-1-freeze": 80,
-#     "task-1-melt": 80,
-#     "task-10-measure-melting-point-(known-substance)": 120,
-#     "task-10-use-thermometer": 30,
-#     "task-2-power-component": 20,
-#     "task-2-power-component-(renewable-vs-nonrenewable-energy)": 30,
-#     "task-2a-test-conductivity": 30,
-#     "task-2a-test-conductivity-of-unknown-substances": 30,
-#     "task-3-find-animal": 15,
-#     "task-3-find-living-thing": 15,
-#     "task-3-find-non-living-thing": 15,
-#     "task-3-find-plant": 15,
-#     "task-4-grow-fruit": 60,
-#     "task-4-grow-plant": 30,
-#     "task-5-chemistry-mix": 60,
-#     "task-5-chemistry-mix-paint-(secondary-color)": 15,
-#     "task-5-chemistry-mix-paint-(tertiary-color)": 30,
-#     "task-6-lifespan-(longest-lived)": 10,
-#     "task-6-lifespan-(longest-lived-then-shortest-lived)": 12,
-#     "task-6-lifespan-(shortest-lived)": 10,
-#     "task-7-identify-life-stages-1": 30,
-#     "task-7-identify-life-stages-2": 30
-# }
 max_steps_dict = {
     "boil": 100,
     "change-the-state-of-matter-of": 80,
@@ -79,30 +51,26 @@ max_steps_dict = {
     "mendelian-genetics-unknown-plant": 50
 }
 
-# with open(file_path, 'r') as file:
-#     train_indices_sampled_taskDesc = json.load(file) # 440 samples -> 1483 samples
 
 class SciWorldEnv(BaseEnv):
     def __init__(
         self,
         task: SciWorldTask,
         env: ScienceWorldEnv,
+        gold_path: bool,
         **kwargs,
     ):
         super().__init__(**kwargs)
         self.task: SciWorldTask = task
         self.env = env
-        # f = open("data/sciworld/max_steps.json")
         self.max_steps_dict = max_steps_dict
-        # self.max_steps_dict = json.load(open("data/sciworld/max_steps.json"))
-        
+        self.gold_path = gold_path
         self.state = State()
-        
-        # self.task_all = []
+        self.sent_transformer_model = SentenceTransformer('sentence-transformers/all-MiniLM-L6-v2', device="cpu")
     
     def parse_action(self, llm_output: str) -> str:
         llm_output = llm_output.strip()
-        pattern = re.compile(r"Action: (.*)", re.DOTALL)
+        pattern = re.compile(r"(?:.*Action: )?(.*)", re.DOTALL)
         action = re.findall(pattern, llm_output)[0]
         assert action is not None
         return action
@@ -116,6 +84,93 @@ class SciWorldEnv(BaseEnv):
         return observation
     
     def step(self, llm_output: str) -> Tuple[str, State]:
+        self.state.history.append({
+            "role": "assistant",
+            "content": llm_output
+        })
+        llm_output = self.parse_action(llm_output)
+
+        valid_actions_list = getattr(self.state, 'valid_actions_list', self.env.get_valid_action_object_combinations())
+        valid_actions_list = [x for x in valid_actions_list if 'reset' not in x] # remove reset from valid actions
+
+        if "focus" in llm_output.lower():
+            valid_actions_list = [x for x in valid_actions_list if 'focus' in x]
+        else:
+            valid_actions_list = [x for x in valid_actions_list if 'focus' not in x]
+
+        if 'teleport' in llm_output.lower():
+            valid_actions_list = [f"teleport to {x}" for x in ["kitchen", "foundry", "workshop", "bathroom", "outside", "living room", "bedroom", "greenhouse", "art studio", "hallway"]] + \
+                [vaction for vaction in valid_actions_list if 'teleport' in vaction]
+        best_match_score = 0.0
+        action = None
+        if len(valid_actions_list) == 0:
+            # check "Ambiguous request in observation"
+            if "Ambiguous request" in self.state.history[-1]['content']:
+                valid_actions_list = [str(x) for x in range(len(self.state.history[-1]['content'].split('\n')[1:]))]
+
+        if len(valid_actions_list) > 0:
+            # Time how long it takes to map generated next_action to one of the valid_actions?
+            # start = time.time()
+            action, topN = get_best_matched_action_using_sent_transformer(
+                allowed_actions=valid_actions_list,
+                query=llm_output,
+                model=self.sent_transformer_model,
+                device="cpu"
+            )
+            # end = time.time()
+            # sentenceTransformerRuntimes.append(round(end - start, 2))
+
+            # print("Sentence transformer runtimes: " + str(sentenceTransformerRuntimes))
+
+            # Check top-1 action match score, and if the score < threshold then 
+            best_match_score = topN[0][1]
+
+        if not (best_match_score > 0.9 or \
+            action in ['0','1','2','3','4','5','6','7','8','9','10','11','12','13','14','15','16','17','18','19','20'] or \
+            (len(valid_actions_list) == 0) ):
+            old_num_moves = self.env.get_num_moves()
+            obs_candidate, *_ = self.env.step(llm_output)
+            new_num_moves = self.env.get_num_moves()
+            if old_num_moves == new_num_moves:
+                action_text = llm_output if len(llm_output) <= 20 else f"{llm_output[:20]}..."
+                observation = f"Your generated action '{action_text}' cannot be matched to a valid action."
+            else:
+                observation = obs_candidate
+            self.state.history.append({
+                "role": "user",
+                "content": observation,
+            })
+            self.state.invalid_action_count += 1
+            self.state.steps += 1
+            self.state.reward = 0
+            observation = self._check_max_steps(observation)
+            return observation, self.state
+        
+        assert action is not None, f"Action is None for {llm_output}, valid_actions_list: {valid_actions_list}, best_match_score: {best_match_score}, all_possible_actions: {self.state.valid_actions_list}, previous_observation: {self.state.history[-1]['content']}"
+        
+        observation, _, done, info = self.env.step(action)
+        reward = info['raw_score']
+        self.state.valid_actions_list = info['valid']
+        observation = f"Observation: {observation}"
+        if self.state.reward is None or reward > self.state.reward:
+            self.state.reward = reward
+
+        self.state.history.append({
+            "role": "user",
+            "content": f"{observation}",
+        })
+
+        self.state.steps += 1
+        observation = self._check_max_steps(observation)
+        if done:
+            self.state.finished = True
+            self.state.success = True
+            self.state.terminate_reason = "success"
+            observation += "\nTask Successfully Completed."
+
+        return observation, self.state
+    
+    def legacy_step(self, llm_output: str) -> Tuple[str, State]:
         self.state.history.append({
             "role": "assistant",
             "content": llm_output
@@ -135,6 +190,7 @@ class SciWorldEnv(BaseEnv):
             observation = self._check_max_steps(observation)
             return observation, self.state
         try:
+            # assert action in [aa['action'] for aa in self.env.get_possible_action_object_combinations()[0]]
             observation, _, done, info = self.env.step(action)
             reward = info['raw_score']
             observation = f"Observation: {observation}"
@@ -162,10 +218,11 @@ class SciWorldEnv(BaseEnv):
 
         return observation, self.state
 
+
     def reset(self) -> Tuple[str, State]:
         self.state = State()
         self.max_steps = self.max_steps_dict[self.task.sub_task_name]
-        self.env.load(self.task.sub_task_name, self.task.variation_idx, simplificationStr="easy", generateGoldPath=False)
+        self.env.load(self.task.sub_task_name, self.task.variation_idx, simplificationStr="easy", generateGoldPath=self.gold_path)
         obs, info = self.env.reset()
         # ! NOTE need to revise when sampling for data-fake or test-set generation !! NOTE
         cur_task = info['taskDesc'] # it is intent, Task Description:\nYour task is to boil lead. For compounds without a boiling point, ...

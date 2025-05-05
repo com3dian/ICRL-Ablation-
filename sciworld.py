@@ -102,10 +102,10 @@ Based on the previous high reward attempts, try to construct a higher scoring pl
 Keep the same "Thought: ... Action: single_action" format for your response.
 """,
 
-    "first_round_instruction": """
-Think for as long as needed before taking each action. Your answer should be in the following format:
-"Thought: ... Action: single_action"
-Your response is parsed by a computer to extract your action. The thought part is simply ignored by the computer.    
+    "neutral_round_instruction": """
+Now, it's your turn and here is the task.
+Take your time to think and then take the next action.
+Make sure to write your final action in the "Action: single_action" format. It is parsed by a script.
 """,
 
     "available_actions": """
@@ -181,18 +181,21 @@ def parse_args():
     return config
 
 
-def load_envs(num_samples, env_step_limit):
+def load_envs(num_envs, env_step_limit, gold_path=False):
     # Initialize base ScienceWorld environment
     base_env = ScienceWorldEnvBase()
     
     # Get available tasks
     task_names = base_env.get_task_names()
+    task_names.sort()
+    if gold_path:
+        task_names = task_names[:1]
+        num_envs = 1
+    else:
+        task_names = task_names[1:]
     
     # Create a list to store environment instances
     envs = []
-    
-    # Number of environments to create (one per sample)
-    num_envs = num_samples
     
     # Create environments
     for i in range(num_envs):
@@ -216,7 +219,8 @@ def load_envs(num_samples, env_step_limit):
             icl_path="",          # doesn't matter, prompting is disabled
             task=task,
             env=base_env,
-            max_steps=max_steps
+            max_steps=max_steps,
+            gold_path=gold_path
         )
         
         sciworld_env.reset()
@@ -226,12 +230,6 @@ def load_envs(num_samples, env_step_limit):
     
     print(f"Created {len(envs)} ScienceWorld environments with random tasks")
     return envs
-
-def extract_action(generated_text):
-    try:
-        return re.search(r'(Action:.*)', generated_text).group(1)
-    except:
-        return generated_text
 
 def evaluate_model_answer(model_answer, sample_question):
     try:
@@ -369,33 +367,57 @@ def run_evaluation(config):
     # Initialize OpenAI client
     client = OpenAI(api_key=config.api_key)
     
-    # Load environments
-    envs = load_envs(1, config.env_step_limit) 
-    
-    #! get weak attempts by running the model itself
-    def f(messages, env):
-        if len(messages) == 0:
-            prompt = f"{config.task_prompt_cot}\n"
-            prompt += "<Instructions>"
-            prompt += config.first_round_instruction
-            prompt += "</instructions>\n\n"
-            prompt += env.env.taskdescription()
-            return [{"role": "user", "content": prompt}], False
-        else:
-            assert messages[-1]["role"] == "assistant", "It's assistant's turn"
-            action = extract_action(messages[-1]["content"])
-            prompt, state = env.step(action)
-            if state.finished:
-                return messages, True
-            else:
-                messages[-2]["content"] = re.sub(f"\n{re.escape(config.available_actions)}", "", messages[-2]["content"])
-                messages.append({"role": "user", "content": prompt + "\n" + config.available_actions})
+    # gold shot
+    envs = load_envs(1, config.env_step_limit, gold_path=True) 
+    attempts = []
+    for env in envs:
+        messages = []
+        messages.append({"role": "user", "content": env.env.taskdescription()})
+        for action in env.env.get_gold_action_sequence():
+            response = f"Thought: ...\nAction: {action}"
+            messages.append({"role": "assistant", "content": response})
+            observation, state = env.legacy_step(action)
+            messages.append({"role": "user", "content": observation})
+            attempts.append(messages)
 
-                return messages, False
+    # bootstrap shot
+    envs = load_envs(1, config.env_step_limit, gold_path=False)
     
-    with ThreadPoolExecutor(max_workers=1) as pool:
+    def wrapper(env):
+        first_round = True
+        def initial_interaction(messages):
+            nonlocal first_round
+            if first_round:
+                messages = messages[0]
+                messages[0]["content"] = f"""{config.task_prompt_cot}\n<Attempt>\nHere's an example (without the Thought part):\n{messages[0]["content"]}"""
+                messages[-1]["content"] = f"""{messages[-1]["content"]}\n</Attempt>\n<Instructions>\n{config.neutral_round_instruction}\n</Instructions>\n{env.env.taskdescription()}"""                
+                # prompt = f"{config.task_prompt_cot}\n"
+                # prompt += "<Instructions>" + config.first_round_instruction + "</instructions>\n\n"
+                # prompt += env.env.taskdescription()
+                first_round = False
+                for i in range(len(messages)):
+                    print(messages[i]["role"], '*'*100)
+                    print(messages[i]["content"])
+                return messages, False
+            else:
+                assert messages[-1]["role"] == "assistant", "It's assistant's turn"
+                print('assistant', '*'*100)
+                print(messages[-1]["content"])
+                messages[-2]["content"] = re.sub(f"\n{re.escape(config.available_actions)}", "", messages[-2]["content"])
+
+                prompt, state = env.step(messages[-1]["content"])
+                if not state.finished:
+                    prompt += "\n" + config.available_actions + "\nAvailable objects: " + ', '.join(env.env.get_possible_objects())
+                messages.append({"role": "user", "content": prompt})
+                print('user', '*'*100)
+                print(prompt)
+
+                return messages, state.finished
+        return initial_interaction
+    
+    with ThreadPoolExecutor(max_workers=10) as pool:
         api_outputs = list(pool.map(
-            lambda env: converse(client, partial(f, env=env), [], config),
+            lambda env: converse(client, wrapper(env), attempts.copy(), config),
             envs
         ))
     
