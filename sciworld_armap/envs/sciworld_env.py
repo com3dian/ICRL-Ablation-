@@ -68,7 +68,7 @@ class SciWorldEnv(BaseEnv):
             self.max_steps = max_steps_dict[self.task.sub_task_name]
         else:
             self.max_steps = max_env_steps
-        self.env.envStepLimit = self.max_steps
+        # self.env.envStepLimit = self.max_steps # we do it here instead
         self.gold_path = gold_path
         self.state = State()
         self.sent_transformer_model = SentenceTransformer('sentence-transformers/all-MiniLM-L6-v2', device="cpu")
@@ -79,6 +79,12 @@ class SciWorldEnv(BaseEnv):
         action = re.findall(pattern, llm_output)[0]
         assert action is not None
         return action
+
+    def _check_max_steps(self, observation: str) -> str:
+        if self.state.steps >= self.max_steps:
+            self.state.finished = True
+            observation += "\nTask Failed. You have exceeded the maximum number of steps."
+        return observation
     
     def step(self, llm_output: str) -> Tuple[str, State]:
         self.state.history.append({
@@ -131,13 +137,14 @@ class SciWorldEnv(BaseEnv):
                 observation = f"Your generated action '{action_text}' cannot be matched to a valid action."
             else:
                 observation = obs_candidate
+            self.state.invalid_action_count += 1
+            self.state.steps += 1
+            self.state.reward = 0
+            observation = self._check_max_steps(observation)
             self.state.history.append({
                 "role": "user",
                 "content": observation,
             })
-            self.state.invalid_action_count += 1
-            self.state.steps += 1
-            self.state.reward = 0
             return observation, self.state
         
         assert action is not None, f"Action is None for {llm_output}, valid_actions_list: {valid_actions_list}, best_match_score: {best_match_score}, all_possible_actions: {self.state.valid_actions_list}, previous_observation: {self.state.history[-1]['content']}"
@@ -147,14 +154,14 @@ class SciWorldEnv(BaseEnv):
         self.state.valid_actions_list = info['valid']
         observation = f"Observation: {observation}"
         self.state.reward = reward
+        self.state.steps += 1
+        self.state.finished = done
+        # self.state.success = reward >= 0
+        observation = self._check_max_steps(observation)
         self.state.history.append({
             "role": "user",
             "content": f"{observation}",
         })
-
-        self.state.steps += 1
-        self.state.finished = done
-        self.state.success = reward >= 0
 
         return observation, self.state
     

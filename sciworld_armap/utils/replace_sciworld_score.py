@@ -13,9 +13,9 @@ def step(self, inputStr:str):
 
 
     # If the number of moves exceeds the environment step limit, then set isCompleted to be true
-    if (numMoves > self.envStepLimit):
-        isCompleted = True
-        observation += "\nTask Failed. You have exceeded the maximum number of steps."
+    # if (numMoves > self.envStepLimit):
+        # isCompleted = True
+        # observation += "\nTask Failed. You have exceeded the maximum number of steps."
 
     # New: Handle this in the API rather than the agent -- if the score is less than zero, then set the isCompleted flag to true.
     if (score < 0):
