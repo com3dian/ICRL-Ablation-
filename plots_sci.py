@@ -7,20 +7,21 @@ import glob
 import os
 from pathlib import Path
 import pandas as pd
-
+from collections import defaultdict
 
 # %%
 def get_sum_df(path):
     data = json.load(open(path))
-    rewards_data = {}
+    dict_data = defaultdict(dict)
     for env_id in data.keys():
-        rewards_data[env_id] = data[env_id]['rewards']
-    df = pd.DataFrame(rewards_data)
-    df_avg = df.applymap(lambda x: np.sum(x) if isinstance(x, list) else x)
-    return df_avg
+        for round_idx in data[env_id]['round_attempts'].keys():
+            dict_data[env_id][round_idx] = data[str(env_id)]['round_attempts'][str(round_idx)]['0']['rewards']
+    df = pd.DataFrame(dict_data)
+    df = df.applymap(lambda x: np.sum(x) if isinstance(x, list) else x)
+    return df
 
-df_icrl = get_sum_df("/home/kdt3jq/ICRL_LLM/ICRL-for-LLM-Agent/ICL/sw/icrl/20250505_1554/sciworld_data_9.json")
-df_rejsample = get_sum_df("/home/kdt3jq/ICRL_LLM/ICRL-for-LLM-Agent/ICL/sw/rejection_sampling/20250505_0605/sciworld_data_9.json")
+df_icrl = get_sum_df("/home/kdt3jq/ICRL_LLM/ICRL-for-LLM-Agent/ICL/sw/icrl/20250505_2341/sciworld_data_round_49_final.json")
+df_rejsample = get_sum_df("/home/kdt3jq/ICRL_LLM/ICRL-for-LLM-Agent/ICL/sw/icrl/20250505_2250/sciworld_data_round_39_final.json")
 
 
 # %%
@@ -51,3 +52,23 @@ ax.legend()
 
 plt.tight_layout()
 plt.show()
+
+# %%
+
+with open("/home/kdt3jq/ICRL_LLM/ICRL-for-LLM-Agent/ICL/sw/icrl/20250505_2250/sciworld_data_round_19_final.json", "r") as f:
+    data = json.load(f)
+
+
+# %%
+# path = "/home/kdt3jq/ICRL_LLM/ICRL-for-LLM-Agent/ICL/sw/icrl/20250505_2341/sciworld_data_round_49_final.json"
+path = "/home/kdt3jq/ICRL_LLM/ICRL-for-LLM-Agent/ICL/sw/icrl/20250506_0308/sciworld_data_round_7_final.json"
+path = "/home/kdt3jq/ICRL_LLM/ICRL-for-LLM-Agent/ICL/sw/icrl/20250506_0308/raw_prompts_sciworld_data_round_7_final.json"
+data = json.load(open(path))
+# dict_data = defaultdict(dict)
+# for env_id in data.keys():
+#     for round_idx in data[env_id]['round_attempts'].keys():
+#         dict_data[env_id][round_idx] = data[str(env_id)]['round_attempts'][str(round_idx)]['0']['rewards']
+# df = pd.DataFrame(dict_data)
+# df
+#%%
+print(data['2']['round_attempts']['6']['0'][0][0]['content'])

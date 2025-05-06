@@ -42,6 +42,7 @@ class Ablation(Enum):
 @dataclass
 class SciWorldConfig:
     sw_output_path: str = "ICL/sw/"  # ScienceWorld output path
+    postfix: str = "temp"
     
     # Experiment modes
     icrl_mode: Ablation = Ablation.ICRL
@@ -57,6 +58,8 @@ class SciWorldConfig:
     # Model configuration
     # model_name: str = "gpt-4.1-mini"
     model_name: str = "gpt-4.1-nano-2025-04-14"
+    exploration_temperature: float = 1.0  
+    exploitation_temperature: float = 0.5  
     # judge_model_name: str = "gpt-4.1-mini"
     # checkpoint_path: str = "google/gemma-7b-it"  # Only for reference
     # base_model_id: str = "google/gemma-7b-it"    # For reference and tokenizer loading
@@ -103,9 +106,14 @@ After thinking, make sure to write your action in the "Action: single_action" fo
 # Based on the previous high reward attempts, try to construct a higher scoring plan while making sure it is feasible as well. 
 # After thinking, make sure to write your action in the "Action: single_action" format. It is parsed by a script.
 # """
+#     exploitation_instruction: str = """
+# Your location and the environment is reset now. It's your turn.
+# Look at the previous high reward attempts and inspired by what they're doing right, try to construct a plan that successfully completes the task. If any of them successfully completed the task, try to do the same, if not, try to stitch together their best parts somehow.
+# After thinking, make sure to write your action in the "Action: single_action" format. It is parsed by a script.
+# """
     exploitation_instruction: str = """
 Your location and the environment is reset now. It's your turn.
-Look at the previous high reward attempts and inspired by what they're doing right, try to construct a plan that successfully completes the task. If any of them successfully completed the task, try to do the same, if not, try to stitch together their best parts somehow.
+Look at the previous high reward attempts and inspired by what they're doing right, try to construct a plan that successfully completes the task. If any of them successfully completed the task, try to do the same, if not, try to stitch together their best parts somehow. Similarly, specifically avoid the actions with negative rewards.
 After thinking, make sure to write your action in the "Action: single_action" format. It is parsed by a script.
 """
 
@@ -177,6 +185,8 @@ def parse_args():
     # Create a timestamped output path
     timestamp = datetime.now().strftime("%Y%m%d_%H%M")
     config.sw_output_path = Path(config.sw_output_path) / config.icrl_mode.value / timestamp
+    if config.postfix:
+        config.sw_output_path = config.sw_output_path + "_" + config.postfix
     
     # Apply debug mode settings if enabled
     if config.debug_run:
@@ -188,6 +198,10 @@ def parse_args():
         logger.debug("*"*100)
         logger.debug("Debug run")
         logger.debug("*"*100)
+        
+    # save config
+    with open(config.sw_output_path / "config.json", "w") as f:
+        json.dump(asdict(config), f, indent=2)
     
     return config
 
@@ -242,7 +256,7 @@ def load_envs(num_envs, config, gold_path=False, micro_repeat=1):
     # logger.debug(f"Created {len(envs)} ScienceWorld environments with random tasks")
     return envs
 
-async def converse(client: AsyncOpenAI, f, messages, config):
+async def converse(client: AsyncOpenAI, f, messages, config, temperature: float = 1.0):
     """
     Converse with the model.
     
@@ -253,13 +267,15 @@ async def converse(client: AsyncOpenAI, f, messages, config):
             outputs messages and done flag on each call (return value and done flag on last call)
         messages: initial input to f
         config: configuration object
+        temperature: temperature parameter for model generation (default: 1.0)
     """
     while True:
         messages, done = f(messages)
         if not done:
             response = await client.chat.completions.create(
                 model=config.model_name, 
-                messages=[{"role": m["role"], "content": m["content"]} for m in messages]
+                messages=[{"role": m["role"], "content": m["content"]} for m in messages],
+                temperature=temperature
             )
             messages.append({"role": "assistant", "content": response.choices[0].message.content})
         else:
@@ -447,7 +463,7 @@ async def run_evaluation(config):
                     logger.info(f"{colorama.Fore.RED + messages[-1]['role']} {'*'*100}")
                     # logger.debug(messages[-1]["content"])
                     logger.info(colorama.Fore.RED + attempt_prompt)
-                    save_data_snapshot(data, config, "bootstrap_attempts.json")
+                    # save_data_snapshot(data, config, "bootstrap_attempts.json")
                     return messages, False
                 else:
                     attempt_prompt = f" (reward: {state.reward})" + prompt
@@ -456,7 +472,7 @@ async def run_evaluation(config):
                     logger.info(f"{colorama.Fore.RED + messages[-1]['role']} {'*'*100}")
                     # logger.debug(messages[-1]["content"])
                     logger.info(colorama.Fore.RED + attempt_prompt)
-                    save_data_snapshot(data, config, "bootstrap_attempts.json")
+                    # save_data_snapshot(data, config, "bootstrap_attempts.json")
                     return None, True
             
         return initial_interaction
@@ -573,7 +589,7 @@ async def run_evaluation(config):
                         current_attempt.attempt_prompts.append({"role": "user", "content": attempt_prompt})
                         messages.append({"role": "user", "content": prompt})
                         # Save snapshot after each completed round
-                        save_data_snapshot(data, config, f"sciworld_data_{round_idx}.json")
+                        # save_data_snapshot(data, config, f"sciworld_data_{round_idx}.json")
                         return None, True
             
             return build_prompt
@@ -581,7 +597,8 @@ async def run_evaluation(config):
         # Process environments in parallel
         async with anyio.create_task_group() as tg:
             async def process_env_idx(i):
-                await converse(client, wrapper2(i), [], config)
+                temperature = config.exploration_temperature if round_idx % 2 == 0 else config.exploitation_temperature
+                await converse(client, wrapper2(i), [], config, temperature=temperature)
             
             for i in range(config.num_envs):
                 tg.start_soon(process_env_idx, i)
