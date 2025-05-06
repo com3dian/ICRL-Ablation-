@@ -4,6 +4,7 @@ import re
 import json
 import sys
 import numpy as np
+import logging
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 import anyio
@@ -19,6 +20,10 @@ from sciworld_armap.envs.sciworld_env import SciWorldEnv
 from sciworld_armap.tasks.sciworld import SciWorldTask
 from omegaconf import OmegaConf
 from enum import Enum
+import colorama
+
+# Set up logging
+logger = logging.getLogger(__name__)
 
 # Add the parent directory to the Python path to find eval_agent
 script_path = Path(__file__).resolve()
@@ -42,13 +47,8 @@ class SciWorldConfig:
     # no_reward: bool = False
     # zero_reward: bool = False
     debug_run: bool = False
+    concise_attempts: bool = False
     
-    # Mode parameter (special handling)
-    # algorithm: Literal["demo", "ICRL"] = "ICRL"
-    
-    # Parameters
-    # num_char: int = 200
-    # num_weak_demo: int = 3000
     num_initial_attempts: int = 2
     # api_eval: bool = True
     max_env_steps: int = 15
@@ -60,8 +60,6 @@ class SciWorldConfig:
     # checkpoint_path: str = "google/gemma-7b-it"  # Only for reference
     # base_model_id: str = "google/gemma-7b-it"    # For reference and tokenizer loading
     
-    # Dataset configuration
-    # dataset_name: str = "game24"
     # split: str = "test"
     max_eval_samples: int = 45
     num_envs: int = 4
@@ -69,7 +67,6 @@ class SciWorldConfig:
     # Evaluation parameters
     rounds: int = 50
     # max_new_tokens: int = 1000
-    # env_step_limit: int = 100
     
     # OpenAI API key
     api_key: str = "sk-C8z62BDhmo4EW1bqOn2TTmdFR29ocUeZXLExkdmGS1T3BlbkFJQcA3zOug-aNTm98KC0Wjsv549b3OgxEGn9TKJknXMA"
@@ -176,9 +173,9 @@ def parse_args():
         config.num_initial_attempts = 1
         config.model_name = "gpt-4.1-nano-2025-04-14"
         config.judge_model_name = "gpt-4.1-nano-2025-04-14"
-        print("*"*100)
-        print("Debug run")
-        print("*"*100)
+        logger.debug("*"*100)
+        logger.debug("Debug run")
+        logger.debug("*"*100)
     
     return config
 
@@ -230,7 +227,7 @@ def load_envs(num_envs, config, gold_path=False, micro_repeat=1):
             # Add to list of environments
             envs.append(sciworld_env)
     
-    # print(f"Created {len(envs)} ScienceWorld environments with random tasks")
+    # logger.debug(f"Created {len(envs)} ScienceWorld environments with random tasks")
     return envs
 
 async def converse(client: AsyncOpenAI, f, messages, config):
@@ -278,7 +275,18 @@ class Attempt:
             'rewards': self.rewards,
             'attempt_prompts': self.attempt_prompts
         }
-
+    
+    def get_processed_attempt_prompts(self, config):
+        processed_attempt_prompts = []
+        for attempt_prompt in self.attempt_prompts:
+            if not config.concise_attempts:
+                processed_attempt_prompts.append(attempt_prompt)
+            else:
+                """
+                Task description: blah blah blah
+                Actions and respective rewards: action1 (reward1) -> action2 (reward2) -> ... -> actionN (rewardN)
+                sum of rewards: 10, task 
+                """
 def save_data_snapshot(data, config, filename):
     """
     Save a snapshot of the data to a file
@@ -332,8 +340,8 @@ async def run_evaluation(config):
     from sciworld_armap.envs.base import raw_icl
     golden_attempts = raw_icl
     for attempt in golden_attempts[0]:
-        print(attempt['role'], '*'*100)
-        print(attempt['content'])
+        logger.info(f"{attempt['role']} {'*'*100}")
+        logger.info(attempt['content'])
 
     # bootstrap shot
     envs = load_envs(config.num_envs, config, gold_path=False, micro_repeat=config.num_initial_attempts)
@@ -365,15 +373,16 @@ async def run_evaluation(config):
                 current_attempt.raw_prompts.append(messages.copy())
                 current_attempt.attempt_prompts.append({"role": "user", "content": env.env.taskdescription()})
                 first_round = False
-                # print(messages[-1]["role"], '*'*100)
-                # print(messages[-1]["content"])
+                logger.info(f"{colorama.Fore.RED + messages[-1]['role']} {'*'*100}")
+                # logger.debug(messages[-1]["content"])
+                logger.info(colorama.Fore.RED + env.env.taskdescription())
                 return messages, False
             else:
                 assert messages[-1]["role"] == "assistant", "It's assistant's turn"
                 current_attempt.raw_prompts.append(messages.copy())
                 current_attempt.attempt_prompts.append({"role": "assistant", "content": messages[-1]["content"]})
-                # print(messages[-1]["role"], '*'*100)
-                # print(messages[-1]["content"])
+                logger.info(f"{colorama.Fore.GREEN + messages[-1]['role']} {'*'*100}")
+                logger.info(colorama.Fore.GREEN + messages[-1]["content"])
                 if context_prompt is not None:
                     messages[-2]["content"] = context_prompt
 
@@ -388,18 +397,18 @@ async def run_evaluation(config):
                     current_attempt.attempt_prompts.append({"role": "user", "content": attempt_prompt})
                     augmented_prompt = prompt + "\n" + config.available_actions + "\nAvailable objects: " + ', '.join(env.env.get_possible_objects())
                     messages.append({"role": "user", "content": augmented_prompt})
-                    # print(messages[-1]["role"], '*'*100)
-                    # print(messages[-1]["content"])
-                    # Save a snapshot after each finished attempt
+                    logger.info(f"{colorama.Fore.RED + messages[-1]['role']} {'*'*100}")
+                    # logger.debug(messages[-1]["content"])
+                    logger.info(colorama.Fore.RED + attempt_prompt)
                     save_data_snapshot(data, config, "bootstrap_attempts.json")
                     return messages, False
                 else:
                     attempt_prompt = f" (reward: {state.reward})" + prompt
                     current_attempt.attempt_prompts.append({"role": "user", "content": attempt_prompt})
                     messages.append({"role": "user", "content": prompt})
-                    # print(messages[-1]["role"], '*'*100)
-                    # print(messages[-1]["content"])
-                    # Save a snapshot after each finished attempt
+                    logger.info(f"{colorama.Fore.RED + messages[-1]['role']} {'*'*100}")
+                    # logger.debug(messages[-1]["content"])
+                    logger.info(colorama.Fore.RED + attempt_prompt)
                     save_data_snapshot(data, config, "bootstrap_attempts.json")
                     return None, True
             
@@ -421,13 +430,13 @@ async def run_evaluation(config):
         rewards = []
         for attempt in data[i]['bootstrap_attempts'].values():
             rewards.extend(attempt.rewards)
-        print(f"Sample {i+1} bootstrap reward average: {np.mean(rewards):.2f}%")
+        logger.info(f"Sample {i+1} bootstrap reward average: {np.mean(rewards):.2f}%")
     
     # main loop
-    print(f"Processing {config.num_envs} environments in {config.rounds} rounds...")
+    logger.info(f"Processing {config.num_envs} environments in {config.rounds} rounds...")
     
     for round_idx in range(config.rounds):
-        print(f"Round {round_idx+1}/{config.rounds}...")
+        logger.info(f"Round {round_idx+1}/{config.rounds}...")
         envs = load_envs(config.num_envs, config, gold_path=False)
         
         def wrapper2(i):
@@ -536,9 +545,18 @@ async def run_evaluation(config):
         # Print reward average for each sample in the current round
         for i in range(config.num_envs):
             rewards = data[i]['round_attempts'][round_idx][0].rewards
-            print(f"Sample {i+1} round {round_idx+1} reward average: {np.mean(rewards):.2f}%")
+            logger.info(f"Sample {i+1} round {round_idx+1} reward average: {np.mean(rewards):.2f}%")
         
 async def main():
+    # Configure logging
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(message)s',
+        handlers=[
+            logging.StreamHandler(),
+        ]
+    )
+    
     # Parse command line arguments and get a config object
     config = parse_args()
     await run_evaluation(config)
