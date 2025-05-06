@@ -89,7 +89,7 @@ class SciWorldEnv(BaseEnv):
     
     def step(self, llm_output: str) -> Tuple[str, State]:
         self.state.history.append({
-            "role": "user",
+            "role": "assistant",
             "content": llm_output
         })
         llm_output = self.parse_action(llm_output)
@@ -108,8 +108,8 @@ class SciWorldEnv(BaseEnv):
         best_match_score = 0.0
         action = None
         if len(valid_actions_list) == 0:
-            assert "Ambiguous request" in self.state.history[-1]['content'], \
-                f"Action is None for {llm_output}, valid_actions_list: {valid_actions_list}, best_match_score: {best_match_score}, all_possible_actions: {self.state.valid_actions_list}, previous_observation: {self.state.history[-1]['content']}"
+            assert "Ambiguous request" in self.state.history[-2]['content'], \
+                f"Action is None for {llm_output}, valid_actions_list: {valid_actions_list}, best_match_score: {best_match_score}, all_possible_actions: {self.state.valid_actions_list}, previous_observation: {self.state.history[-2]['content']}"
             valid_actions_list = [str(x) for x in range(len(self.state.history[-1]['content'].split('\n')[1:]))]
 
         if len(valid_actions_list) > 0:
@@ -144,7 +144,7 @@ class SciWorldEnv(BaseEnv):
             self.state.reward = 0
             observation = self._check_max_steps(observation)
             self.state.history.append({
-                "role": "assistant",
+                "role": "user",
                 "content": observation,
             })
             return observation, self.state
@@ -162,7 +162,7 @@ class SciWorldEnv(BaseEnv):
         # self.state.success = reward >= 0
         observation = self._check_max_steps(observation)
         self.state.history.append({
-            "role": "assistant",
+            "role": "user",
             "content": f"{observation}",
         })
 
