@@ -11,7 +11,7 @@ import anyio
 from openai import AsyncOpenAI
 from collections import defaultdict
 from datetime import datetime
-from dataclasses import dataclass, asdict, field
+from dataclasses import dataclass, field
 from typing import Literal, Dict, List, Any
 from scienceworld import ScienceWorldEnv as ScienceWorldEnvBase
 from sciworld_armap.utils.replace_sciworld_score import sciworld_monkey_patch
@@ -60,6 +60,7 @@ class SciWorldConfig:
     model_name: str = "gpt-4.1-nano-2025-04-14"
     exploration_temperature: float = 1.0  
     exploitation_temperature: float = 0.5  
+    # exploitation_temperature: float = 1.0
     # judge_model_name: str = "gpt-4.1-mini"
     # checkpoint_path: str = "google/gemma-7b-it"  # Only for reference
     # base_model_id: str = "google/gemma-7b-it"    # For reference and tokenizer loading
@@ -111,9 +112,14 @@ After thinking, make sure to write your action in the "Action: single_action" fo
 # Look at the previous high reward attempts and inspired by what they're doing right, try to construct a plan that successfully completes the task. If any of them successfully completed the task, try to do the same, if not, try to stitch together their best parts somehow.
 # After thinking, make sure to write your action in the "Action: single_action" format. It is parsed by a script.
 # """
+#     exploitation_instruction: str = """
+# Your location and the environment is reset now. It's your turn.
+# Look at the previous high reward attempts and inspired by what they're doing right, try to construct a plan that successfully completes the task. If any of them successfully completed the task, try to do the same, if not, try to stitch together their best parts somehow. Similarly, specifically avoid the actions with negative rewards.
+# After thinking, make sure to write your action in the "Action: single_action" format. It is parsed by a script.
+# """
     exploitation_instruction: str = """
 Your location and the environment is reset now. It's your turn.
-Look at the previous high reward attempts and inspired by what they're doing right, try to construct a plan that successfully completes the task. If any of them successfully completed the task, try to do the same, if not, try to stitch together their best parts somehow. Similarly, specifically avoid the actions with negative rewards.
+Look at the previous high reward attempts/actions and based on what they're doing right, stitch together an improved action sequence. Obviously, if any of them successfully completed the task, simply copy it.
 After thinking, make sure to write your action in the "Action: single_action" format. It is parsed by a script.
 """
 
@@ -183,10 +189,14 @@ def parse_args():
     config.task_prompt_cot = config.task_prompt_cot.format(available_actions=config.available_actions)
 
     # Create a timestamped output path
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M")
-    config.sw_output_path = Path(config.sw_output_path) / config.icrl_mode.value / timestamp
+    postfix = datetime.now().strftime("%Y%m%d_%H%M")
     if config.postfix:
-        config.sw_output_path = config.sw_output_path + "_" + config.postfix
+        postfix = postfix + "_" + config.postfix
+    output_path = Path(base_path) / config.sw_output_path / config.icrl_mode.value / postfix
+    config.sw_output_path = str(output_path)
+    
+    # Create output directory if it doesn't exist
+    output_path.mkdir(parents=True, exist_ok=True)
     
     # Apply debug mode settings if enabled
     if config.debug_run:
@@ -200,8 +210,8 @@ def parse_args():
         logger.debug("*"*100)
         
     # save config
-    with open(config.sw_output_path / "config.json", "w") as f:
-        json.dump(asdict(config), f, indent=2)
+    with open(output_path / "config.yaml", "w") as f:
+        OmegaConf.save(config, f)
     
     return config
 
@@ -334,10 +344,6 @@ def save_data_snapshot(data, config, filename):
         config: Configuration object
         filename: Name of the file to save to
     """
-    # Create output directory if it doesn't exist
-    output_path = Path(f"{base_path}/{config.sw_output_path}")
-    output_path.mkdir(parents=True, exist_ok=True)
-    
     # Convert data to serializable format
     serializable_data = {}
     raw_prompts_data = {}
@@ -371,6 +377,8 @@ def save_data_snapshot(data, config, filename):
                 } for round_id, round_data in env_data.get('round_attempts', {}).items()
             }
         }
+    
+    output_path = Path(config.sw_output_path)
     
     # Save main data to file
     with open(output_path / filename, "w") as f:
