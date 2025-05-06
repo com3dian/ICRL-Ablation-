@@ -64,10 +64,13 @@ class SciWorldEnv(BaseEnv):
         super().__init__(**kwargs)
         self.task: SciWorldTask = task
         self.env = env
-        self.max_steps_dict = max_steps_dict
+        if max_env_steps == -1:
+            self.max_steps = max_steps_dict[self.task.sub_task_name]
+        else:
+            self.max_steps = max_env_steps
+        self.env.envStepLimit = self.max_steps
         self.gold_path = gold_path
         self.state = State()
-        self.max_steps = max_env_steps
         self.sent_transformer_model = SentenceTransformer('sentence-transformers/all-MiniLM-L6-v2', device="cpu")
     
     def parse_action(self, llm_output: str) -> str:
@@ -76,14 +79,6 @@ class SciWorldEnv(BaseEnv):
         action = re.findall(pattern, llm_output)[0]
         assert action is not None
         return action
-    
-    def _check_max_steps(self, observation: str) -> str:
-        if self.state.steps >= self.max_steps:
-            self.state.finished = True
-            self.state.success = False
-            self.state.terminate_reason = "max_steps"
-            observation += "\nTask Failed. You have exceeded the maximum number of steps."
-        return observation
     
     def step(self, llm_output: str) -> Tuple[str, State]:
         self.state.history.append({
@@ -106,7 +101,6 @@ class SciWorldEnv(BaseEnv):
         best_match_score = 0.0
         action = None
         if len(valid_actions_list) == 0:
-            # check "Ambiguous request in observation"
             if "Ambiguous request" in self.state.history[-1]['content']:
                 valid_actions_list = [str(x) for x in range(len(self.state.history[-2]['content'].split('\n')[1:]))]
 
@@ -124,7 +118,6 @@ class SciWorldEnv(BaseEnv):
 
             # print("Sentence transformer runtimes: " + str(sentenceTransformerRuntimes))
 
-            # Check top-1 action match score, and if the score < threshold then 
             best_match_score = topN[0][1]
 
         if not (best_match_score > 0.9 or \
@@ -145,109 +138,28 @@ class SciWorldEnv(BaseEnv):
             self.state.invalid_action_count += 1
             self.state.steps += 1
             self.state.reward = 0
-            self.state.reward_history.append(0)
-            observation = self._check_max_steps(observation)
             return observation, self.state
         
         assert action is not None, f"Action is None for {llm_output}, valid_actions_list: {valid_actions_list}, best_match_score: {best_match_score}, all_possible_actions: {self.state.valid_actions_list}, previous_observation: {self.state.history[-1]['content']}"
         
         observation, _, done, info = self.env.step(action)
-        reward = info['raw_score']
+        reward = info['reward']
         self.state.valid_actions_list = info['valid']
         observation = f"Observation: {observation}"
-        # if self.state.reward is None or reward > self.state.reward:
         self.state.reward = reward
-        self.state.reward_history.append(reward)
         self.state.history.append({
             "role": "user",
             "content": f"{observation}",
         })
 
         self.state.steps += 1
-        observation = self._check_max_steps(observation)
-        if done:
-            self.state.finished = True
-            self.state.success = True
-            self.state.terminate_reason = "success"
-            observation += "\nTask Successfully Completed."
+        self.state.finished = done
+        self.state.success = reward >= 0
 
         return observation, self.state
     
-    def legacy_step(self, llm_output: str) -> Tuple[str, State]:
-        self.state.history.append({
-            "role": "assistant",
-            "content": llm_output
-        })
-
-        try:
-            action = self.parse_action(llm_output)
-        except:
-            observation = f"Observation: Invalid format. The input must contains 'Action: '"
-            self.state.history.append({
-                "role": "user",
-                "content": observation,
-            })
-            self.state.invalid_action_count += 1
-            self.state.steps += 1
-            observation = self._check_max_steps(observation)
-            return observation, self.state
-        try:
-            # assert action in [aa['action'] for aa in self.env.get_possible_action_object_combinations()[0]]
-            observation, _, done, info = self.env.step(action)
-            reward = info['raw_score']
-            observation = f"Observation: {observation}"
-            # available_actions = self.env.get_available_actions()
-            # observation = f"Observation:\n{observation}\n\nAvailable Actions:\n{available_actions}"
-        except AssertionError:
-            observation = f'Observation: Invalid action! Your action: {action}'
-            self.state.invalid_action_count += 1
-            done = False
-
-        self.state.history.append({
-            "role": "user",
-            "content": f"{observation}",
-        })
-
-        self.state.steps += 1
-        observation = self._check_max_steps(observation)
-        if done:
-            self.state.finished = True
-            self.state.success = True
-            self.state.terminate_reason = "success"
-            observation += "\nTask Successfully Completed."
-
-        return observation, self.state
-
-
     def reset(self) -> Tuple[str, State]:
         self.state = State()
-        if self.max_steps == -1:
-            self.max_steps = self.max_steps_dict[self.task.sub_task_name]
-        else:
-            self.max_steps = self.max_steps
         self.env.load(self.task.sub_task_name, self.task.variation_idx, simplificationStr="easy", generateGoldPath=self.gold_path)
         obs, info = self.env.reset()
-        # ! NOTE need to revise when sampling for data-fake or test-set generation !! NOTE
-        cur_task = info['taskDesc'] # it is intent, Task Description:\nYour task is to boil lead. For compounds without a boiling point, ...
-        # import pdb; pdb.set_trace()
-        #################################
-        # task_all.append(cur_task)
-        # if len(task_all) == 1483: # 440 before
-        #     # save file
-        #     save_path = '/home/rs4110/code/ScienceWorld_Planning/eval_agent/data/sciworld/train_indices_sampled_taskDesc2.json'
-        #     with open(save_path, "w") as fh:
-        #         json.dump(task_all, fh)
-        # self.state.finished = True
-        # cur_task = random.choice(train_indices_sampled_taskDesc)
-        # import pdb; pdb.set_trace()
-        #################################
-        # observation, messages = prompt_with_icl(self.instruction, self.raw_icl, cur_task, 1)
-        # if self.icl_format == 'first':
-        #     self.state.history.append({
-        #         "role": "user",
-        #         "content": observation,
-        #     })
-        # elif self.icl_format == 'conversation':
-        #     self.state.history = messages
-        # return observation, self.state
         return obs, info

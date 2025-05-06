@@ -99,6 +99,10 @@ raw_icl = [
         {
             "role": "assistant",
             "content": "Thought: The task is to create green paint and then focus on it. Now that the green paint is made, I should concentrate on the final product.\nAction: focus on green paint"
+        },
+        {
+            "role": "user",
+            "content": "Observation: You focus on the green paint.\nTask Successfully Completed."
         }
     ]
 ]
