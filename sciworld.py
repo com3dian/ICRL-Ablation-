@@ -1,4 +1,5 @@
 import pickle
+import time
 import os
 import re
 import json
@@ -22,6 +23,9 @@ from omegaconf import OmegaConf
 from enum import Enum
 import colorama
 import copy
+import dotenv
+
+dotenv.load_dotenv()
 
 # Set up logging
 logger = logging.getLogger(__name__)
@@ -42,7 +46,7 @@ class Ablation(Enum):
 @dataclass
 class SciWorldConfig:
     sw_output_path: str = "ICL/sw/"  # ScienceWorld output path
-    postfix: str = "temp"
+    postfix: str = ""
     
     # Experiment modes
     icrl_mode: Ablation = Ablation.ICRL
@@ -57,9 +61,10 @@ class SciWorldConfig:
     
     # Model configuration
     # model_name: str = "gpt-4.1-mini"
-    model_name: str = "gpt-4.1-nano-2025-04-14"
+    # model_name: str = "gpt-4.1-nano-2025-04-14"
+    model_name: str = "google/gemini-2.0-flash-001"
     exploration_temperature: float = 1.0  
-    exploitation_temperature: float = 0.5  
+    exploitation_temperature: float = 1.0
     # exploitation_temperature: float = 1.0
     # judge_model_name: str = "gpt-4.1-mini"
     # checkpoint_path: str = "google/gemma-7b-it"  # Only for reference
@@ -117,9 +122,15 @@ After thinking, make sure to write your action in the "Action: single_action" fo
 # Look at the previous high reward attempts and inspired by what they're doing right, try to construct a plan that successfully completes the task. If any of them successfully completed the task, try to do the same, if not, try to stitch together their best parts somehow. Similarly, specifically avoid the actions with negative rewards.
 # After thinking, make sure to write your action in the "Action: single_action" format. It is parsed by a script.
 # """
+#     exploitation_instruction: str = """
+# Your location and the environment is reset now. It's your turn.
+# Look at the previous high reward attempts/actions and based on what they're doing right, stitch together an improved action sequence. Obviously, if any of them successfully completed the task, simply copy it.
+# After thinking, make sure to write your action in the "Action: single_action" format. It is parsed by a script.
+# """
     exploitation_instruction: str = """
 Your location and the environment is reset now. It's your turn.
-Look at the previous high reward attempts/actions and based on what they're doing right, stitch together an improved action sequence. Obviously, if any of them successfully completed the task, simply copy it.
+Look at the previous attempts. The steps with positive rewards are the ones that have achieved a subgoal successfully. Try to feasibly chain together the positive reward steps to achieve all subgoals and complete the task.
+Obviously, if any of the previous attempts successfully completed the task (100 total reward), you can simply copy all the steps.
 After thinking, make sure to write your action in the "Action: single_action" format. It is parsed by a script.
 """
 
@@ -280,13 +291,19 @@ async def converse(client: AsyncOpenAI, f, messages, config, temperature: float 
         temperature: temperature parameter for model generation (default: 1.0)
     """
     while True:
+        # t0 = time.perf_counter()
         messages, done = f(messages)
+        # t1 = time.perf_counter()
+        # logger.info(f"Environment step took {t1 - t0} seconds")
         if not done:
+            # t0 = time.perf_counter()
             response = await client.chat.completions.create(
                 model=config.model_name, 
                 messages=[{"role": m["role"], "content": m["content"]} for m in messages],
                 temperature=temperature
             )
+            # t1 = time.perf_counter()
+            # logger.info(f"API call took {t1 - t0} seconds")
             messages.append({"role": "assistant", "content": response.choices[0].message.content})
         else:
             break
@@ -406,7 +423,11 @@ async def run_evaluation(config):
         }
     
     # Initialize AsyncOpenAI client
-    client = AsyncOpenAI(api_key=config.api_key)
+    if '/' in config.model_name:
+        # use openrouter
+        client = AsyncOpenAI(api_key=os.getenv("OPENROUTER_API_KEY"), base_url="https://openrouter.ai/api/v1")
+    else:
+        client = AsyncOpenAI(api_key=config.api_key)
     
     from sciworld_armap.envs.base import raw_icl
     golden_attempts = raw_icl
