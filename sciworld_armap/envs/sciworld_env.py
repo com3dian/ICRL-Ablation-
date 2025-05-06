@@ -73,7 +73,8 @@ class SciWorldEnv(BaseEnv):
         self.state = State()
         self.sent_transformer_model = SentenceTransformer('sentence-transformers/all-MiniLM-L6-v2', device="cpu")
     
-    def parse_action(self, llm_output: str) -> str:
+    @staticmethod
+    def parse_action(llm_output: str) -> str:
         llm_output = llm_output.strip()
         pattern = re.compile(r"(?:.*Action: )?(.*)", re.DOTALL)
         action = re.findall(pattern, llm_output)[0]
@@ -88,7 +89,7 @@ class SciWorldEnv(BaseEnv):
     
     def step(self, llm_output: str) -> Tuple[str, State]:
         self.state.history.append({
-            "role": "assistant",
+            "role": "user",
             "content": llm_output
         })
         llm_output = self.parse_action(llm_output)
@@ -107,8 +108,9 @@ class SciWorldEnv(BaseEnv):
         best_match_score = 0.0
         action = None
         if len(valid_actions_list) == 0:
-            if "Ambiguous request" in self.state.history[-1]['content']:
-                valid_actions_list = [str(x) for x in range(len(self.state.history[-2]['content'].split('\n')[1:]))]
+            assert "Ambiguous request" in self.state.history[-1]['content'], \
+                f"Action is None for {llm_output}, valid_actions_list: {valid_actions_list}, best_match_score: {best_match_score}, all_possible_actions: {self.state.valid_actions_list}, previous_observation: {self.state.history[-1]['content']}"
+            valid_actions_list = [str(x) for x in range(len(self.state.history[-1]['content'].split('\n')[1:]))]
 
         if len(valid_actions_list) > 0:
             # Time how long it takes to map generated next_action to one of the valid_actions?
@@ -142,12 +144,13 @@ class SciWorldEnv(BaseEnv):
             self.state.reward = 0
             observation = self._check_max_steps(observation)
             self.state.history.append({
-                "role": "user",
+                "role": "assistant",
                 "content": observation,
             })
             return observation, self.state
         
-        assert action is not None, f"Action is None for {llm_output}, valid_actions_list: {valid_actions_list}, best_match_score: {best_match_score}, all_possible_actions: {self.state.valid_actions_list}, previous_observation: {self.state.history[-1]['content']}"
+        if action is None:
+            pdb.set_trace()
         
         observation, _, done, info = self.env.step(action)
         reward = info['reward']
@@ -159,7 +162,7 @@ class SciWorldEnv(BaseEnv):
         # self.state.success = reward >= 0
         observation = self._check_max_steps(observation)
         self.state.history.append({
-            "role": "user",
+            "role": "assistant",
             "content": f"{observation}",
         })
 

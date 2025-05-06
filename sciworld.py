@@ -21,6 +21,7 @@ from sciworld_armap.tasks.sciworld import SciWorldTask
 from omegaconf import OmegaConf
 from enum import Enum
 import colorama
+import copy
 
 # Set up logging
 logger = logging.getLogger(__name__)
@@ -85,15 +86,26 @@ FOCUS is a extremely critical action that can be only used the number of times '
 </Environment description>
 """
     
+#     exploration_instruction: str = """
+# Your location and the environment is reset now. It's your turn.
+# Look at the previous attempts and try to construct a plan that is different from every single one of the previous attempts, while making sure it is feasible as well. 
+# After thinking, make sure to write your action in the "Action: single_action" format. It is parsed by a script.
+# """
+
     exploration_instruction: str = """
 Your location and the environment is reset now. It's your turn.
-Look at the previous attempts and try to construct a plan that is different from every single one of the previous attempts, while making sure it is feasible as well. 
+Look at the previous attempts and try to construct a plan for doing the task that is different from every single one of the previous attempts, while making sure it is feasible as well. 
 After thinking, make sure to write your action in the "Action: single_action" format. It is parsed by a script.
 """
 
+#     exploitation_instruction: str = """
+# Your location and the environment is reset now. It's your turn.
+# Based on the previous high reward attempts, try to construct a higher scoring plan while making sure it is feasible as well. 
+# After thinking, make sure to write your action in the "Action: single_action" format. It is parsed by a script.
+# """
     exploitation_instruction: str = """
 Your location and the environment is reset now. It's your turn.
-Based on the previous high reward attempts, try to construct a higher scoring plan while making sure it is feasible as well. 
+Look at the previous high reward attempts and inspired by what they're doing right, try to construct a plan that successfully completes the task. If any of them successfully completed the task, try to do the same, if not, try to stitch together their best parts somehow.
 After thinking, make sure to write your action in the "Action: single_action" format. It is parsed by a script.
 """
 
@@ -269,24 +281,34 @@ class Attempt:
     rewards: list[float] = field(default_factory=list)     # rewards from the model
     attempt_prompts: list[dict] = field(default_factory=list)  # has rewards embedded
     
-    def to_dict(self):
-        return {
-            'raw_prompts': self.raw_prompts,
-            'rewards': self.rewards,
-            'attempt_prompts': self.attempt_prompts
-        }
-    
     def get_processed_attempt_prompts(self, config):
-        processed_attempt_prompts = []
-        for attempt_prompt in self.attempt_prompts:
-            if not config.concise_attempts:
-                processed_attempt_prompts.append(attempt_prompt)
-            else:
-                """
-                Task description: blah blah blah
-                Actions and respective rewards: action1 (reward1) -> action2 (reward2) -> ... -> actionN (rewardN)
-                sum of rewards: 10, task 
-                """
+        attempt_prompts_copy = copy.deepcopy(self.attempt_prompts)
+
+        if not config.concise_attempts:
+            attempt_prompts_copy[-1]['content'] += f" (Total reward: {sum(self.rewards)})"
+            return attempt_prompts_copy
+        else: 
+            """
+            (Interaction summary)
+            Task description: blah blah blah
+            Actions and respective rewards: action1 (reward1) -> action2 (reward2) -> ... -> actionN (rewardN)
+            sum of rewards: 10, final observation: blah blah blah
+            """
+            content = "(Interaction summary)\n"
+            content += attempt_prompts_copy[0]['content']
+            content += "\nActions and respective rewards:\n"
+            action_idx = 0
+            for attempt_prompt in attempt_prompts_copy:
+                if attempt_prompt['role'] == "assistant":
+                    action = SciWorldEnv.parse_action(attempt_prompt['content'])
+                    if action_idx == 0:
+                        content += f"{action} (reward={self.rewards[0]})"
+                    else:
+                        content += f"-> {action} (reward={self.rewards[action_idx]})"
+                    action_idx += 1
+            content += f"\nTotal reward: {sum(self.rewards)}, Outcome: {attempt_prompts_copy[-1]['content']}"
+            return [{"role": "user", "content": content}]
+
 def save_data_snapshot(data, config, filename):
     """
     Save a snapshot of the data to a file
@@ -302,21 +324,46 @@ def save_data_snapshot(data, config, filename):
     
     # Convert data to serializable format
     serializable_data = {}
+    raw_prompts_data = {}
+    
     for env_id, env_data in data.items():
         serializable_data[env_id] = {
             'bootstrap_attempts': {
-                attempt_id: attempt.to_dict() for attempt_id, attempt in env_data.get('bootstrap_attempts', {}).items()
+                attempt_id: {
+                    'rewards': attempt.rewards,
+                    'attempt_prompts': attempt.attempt_prompts
+                } for attempt_id, attempt in env_data.get('bootstrap_attempts', {}).items()
             },
             'round_attempts': {
                 round_id: {
-                    attempt_id: attempt.to_dict() for attempt_id, attempt in round_data.items()
+                    attempt_id: {
+                        'rewards': attempt.rewards,
+                        'attempt_prompts': attempt.attempt_prompts
+                    } for attempt_id, attempt in round_data.items()
+                } for round_id, round_data in env_data.get('round_attempts', {}).items()
+            }
+        }
+        
+        # Store raw_prompts separately
+        raw_prompts_data[env_id] = {
+            'bootstrap_attempts': {
+                attempt_id: attempt.raw_prompts for attempt_id, attempt in env_data.get('bootstrap_attempts', {}).items()
+            },
+            'round_attempts': {
+                round_id: {
+                    attempt_id: attempt.raw_prompts for attempt_id, attempt in round_data.items()
                 } for round_id, round_data in env_data.get('round_attempts', {}).items()
             }
         }
     
-    # Save to file
+    # Save main data to file
     with open(output_path / filename, "w") as f:
         json.dump(serializable_data, f, indent=2)
+    
+    # Save raw_prompts to a separate file
+    raw_prompts_filename = f"raw_prompts_{filename}"
+    with open(output_path / raw_prompts_filename, "w") as f:
+        json.dump(raw_prompts_data, f, indent=2)
     
 
 async def run_evaluation(config):
@@ -430,7 +477,7 @@ async def run_evaluation(config):
         rewards = []
         for attempt in data[i]['bootstrap_attempts'].values():
             rewards.extend(attempt.rewards)
-        logger.info(f"Sample {i+1} bootstrap reward average: {np.mean(rewards):.2f}%")
+        logger.info(f"Sample {i+1} bootstrap reward sum: {sum(rewards):.2f}")
     
     # main loop
     logger.info(f"Processing {config.num_envs} environments in {config.rounds} rounds...")
@@ -472,14 +519,14 @@ async def run_evaluation(config):
                     # Add all bootstrap attempts
                     for _, attempt_obj in data[env_id]['bootstrap_attempts'].items():
                         messages.append({"role": "user", "content": f"Attempt {attempt_counter}:"})
-                        messages.extend(attempt_obj.attempt_prompts)
+                        messages.extend(attempt_obj.get_processed_attempt_prompts(config))
                         attempt_counter += 1
                     
                     # Add all previous round attempts
                     for prev_round_idx in range(round_idx):
                         for _, attempt_obj in data[env_id]['round_attempts'][prev_round_idx].items():
                             messages.append({"role": "user", "content": f"Attempt {attempt_counter}:"})
-                            messages.extend(attempt_obj.attempt_prompts)
+                            messages.extend(attempt_obj.get_processed_attempt_prompts(config))
                             attempt_counter += 1
                     
                     # Add instruction based on round type and task description
@@ -545,17 +592,18 @@ async def run_evaluation(config):
         # Print reward average for each sample in the current round
         for i in range(config.num_envs):
             rewards = data[i]['round_attempts'][round_idx][0].rewards
-            logger.info(f"Sample {i+1} round {round_idx+1} reward average: {np.mean(rewards):.2f}%")
+            logger.info(f"Sample {i+1} round {round_idx+1} reward sum: {sum(rewards):.2f}")
         
 async def main():
     # Configure logging
     logging.basicConfig(
-        level=logging.INFO,
+        level=logging.WARNING,
         format='%(message)s',
         handlers=[
             logging.StreamHandler(),
         ]
     )
+    logger.setLevel(logging.INFO)
     
     # Parse command line arguments and get a config object
     config = parse_args()
