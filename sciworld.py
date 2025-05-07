@@ -208,6 +208,8 @@ def parse_args():
 
     config.no_rewards = config.icrl_mode == Ablation.NO_REWARDS
 
+    config.is_openrouter = '/' in config.model_name
+
     # save config
     output_path.mkdir(parents=True, exist_ok=True)
     with open(output_path / "config.yaml", "w") as f:
@@ -290,7 +292,12 @@ async def converse(client: AsyncOpenAI, f, messages, config, temperature: float 
             response = await client.chat.completions.create(
                 model=config.model_name, 
                 messages=[{"role": m["role"], "content": m["content"]} for m in messages],
-                temperature=temperature
+                temperature=temperature,
+                extra_body={
+                    "provider": {
+                        "allow_fallbacks": False
+                    } if config.is_openrouter else None
+                }
             )
             # t1 = time.perf_counter()
             # logger.info(f"API call took {t1 - t0} seconds")
@@ -446,7 +453,7 @@ async def run_evaluation(config):
         }
     
     # Initialize AsyncOpenAI client
-    if '/' in config.model_name:
+    if config.is_openrouter:
         # use openrouter
         client = AsyncOpenAI(api_key=os.getenv("OPENROUTER_API_KEY"), base_url="https://openrouter.ai/api/v1")
     else:
@@ -483,9 +490,9 @@ async def run_evaluation(config):
             
             if first_round:
                 messages = messages[0]
-                messages[0]["content"] = f"""{config.task_prompt_cot}\n<Attempt>\nHere's an example (without the Thought part):\n{messages[0]["content"]}"""
-                messages[-1]["content"] = f"""{messages[-1]["content"]}\n</Attempt>\n<Instructions>\n{config.neutral_round_instruction}\n</Instructions>\n{env.env.taskdescription()}"""                
-                current_attempt.raw_prompts.append(messages.copy())
+                messages[0]["content"] = f"""{config.task_prompt_cot}\n<Attempts>\nHere's an example (without the Thought part):\n{messages[0]["content"]}"""
+                messages[-1]["content"] = f"""{messages[-1]["content"]}\n</Attempts>\n<Instructions>\n{config.neutral_round_instruction}\n</Instructions>\n{env.env.taskdescription()}"""                
+                current_attempt.raw_prompts.append(copy.deepcopy(messages))
                 current_attempt.attempt_prompts.append({"role": "user", "content": env.env.taskdescription()})
                 first_round = False
                 logger.info(f"{colorama.Fore.RED + messages[-1]['role']} {'*'*100}")
@@ -494,7 +501,6 @@ async def run_evaluation(config):
                 return messages, False
             else:
                 assert messages[-1]["role"] == "assistant", "It's assistant's turn"
-                current_attempt.raw_prompts.append(messages.copy())
                 current_attempt.attempt_prompts.append({"role": "assistant", "content": messages[-1]["content"]})
                 logger.info(f"{colorama.Fore.GREEN + messages[-1]['role']} {'*'*100}")
                 logger.info(colorama.Fore.GREEN + messages[-1]["content"])
@@ -520,6 +526,7 @@ async def run_evaluation(config):
                     # logger.debug(messages[-1]["content"])
                     logger.info(colorama.Fore.RED + attempt_prompt)
                     # save_data_snapshot(data, config, "bootstrap_attempts.json")
+                    current_attempt.raw_prompts.append(copy.deepcopy(messages))
                     return messages, False
                 else:
                     attempt_prompt = prompt
@@ -529,6 +536,7 @@ async def run_evaluation(config):
                     # logger.debug(messages[-1]["content"])
                     logger.info(colorama.Fore.RED + attempt_prompt)
                     # save_data_snapshot(data, config, "bootstrap_attempts.json")
+                    current_attempt.raw_prompts.append(copy.deepcopy(messages))
                     return None, True
             
         return initial_interaction
@@ -582,7 +590,7 @@ async def run_evaluation(config):
                 nonlocal current_attempt
                 
                 if first_round:
-                    prompt = f"{config.task_prompt_cot}\n<Attempt>\nYou can see several attempts below:"
+                    prompt = f"{config.task_prompt_cot}\n<Attempts>\nYou can see several attempts below:"
                     messages.append({"role": "user", "content": prompt})
                     
                     # Use a single attempt counter for all attempts
@@ -609,11 +617,12 @@ async def run_evaluation(config):
                     else:
                         raise ValueError(f"Invalid ablation mode: {config.icrl_mode}")
                         
-                    messages.append({"role": "user", "content": f"""<Instructions>\n{instruction}\n</Instructions>\n{env.env.taskdescription()}"""})
+                    messages.append({"role": "user", "content": "</Attempts>"})
+                    messages.append({"role": "user", "content": f"""<Instructions>{instruction}</Instructions>\n{env.env.taskdescription()}"""})
                     messages = merge_same_role_messages(messages)
                     
                     # Record raw prompt and attempt prompt
-                    current_attempt.raw_prompts.append(messages.copy())
+                    current_attempt.raw_prompts.append(copy.deepcopy(messages))
                     current_attempt.attempt_prompts.append({"role": "user", "content": env.env.taskdescription()})
                     
                     first_round = False
@@ -622,7 +631,6 @@ async def run_evaluation(config):
                     assert messages[-1]["role"] == "assistant", "It's assistant's turn"
                     
                     # Record raw prompt and attempt prompt
-                    current_attempt.raw_prompts.append(messages.copy())
                     current_attempt.attempt_prompts.append({"role": "assistant", "content": messages[-1]["content"]})
                     
                     if context_prompt is not None:
@@ -639,11 +647,13 @@ async def run_evaluation(config):
                         current_attempt.attempt_prompts.append({"role": "user", "content": attempt_prompt})
                         augmented_prompt = prompt + "\n" + config.available_actions + "\nAvailable objects: " + ', '.join(env.env.get_possible_objects())
                         messages.append({"role": "user", "content": augmented_prompt})
+                        current_attempt.raw_prompts.append(copy.deepcopy(messages))
                         return messages, False
                     else:
                         attempt_prompt = prompt
                         current_attempt.attempt_prompts.append({"role": "user", "content": attempt_prompt})
                         messages.append({"role": "user", "content": prompt})
+                        current_attempt.raw_prompts.append(copy.deepcopy(messages))
                         # Save snapshot after each completed round
                         # save_data_snapshot(data, config, f"sciworld_data_{round_idx}.json")
                         return None, True
