@@ -42,7 +42,6 @@ base_path = os.getcwd()
 class Ablation(Enum):
     ICRL = "icrl"
     NEUTRAL_PROMPT = "neutral_prompt"
-    NO_REWARDS = "no_rewards"
     RANDOM_SAMPLING = "random_sampling"
     REFLEXION = "reflexion"
 
@@ -57,7 +56,10 @@ class SciWorldConfig:
     concise_attempts: bool = True
     positive_only: bool = False
     max_attempts_in_context: Optional[int] = None
-
+    zero_out_rewards: bool = False
+    no_rewards: bool = False
+    explore_only: bool = False
+    explore_and_exploit: bool = False
     # Shorthands
     # no_rewards: bool = False # shorthand
     # is_openrouter: bool = False # shorthand
@@ -66,7 +68,7 @@ class SciWorldConfig:
     num_initial_attempts: int = 2
     max_env_steps: int = 15
     num_envs: int = 4
-    rounds: int = 50
+    rounds: int = 40
     
     # Model configuration
     # model_name: str = "gpt-4.1-mini"
@@ -128,14 +130,32 @@ After thinking, make sure to write your action **exactly** in the "Action: singl
     exploitation_instruction: str = """
 Your location and the environment is reset now. It's your turn.
 Look at the previous attempts. The steps with positive rewards are the ones that have achieved a subgoal successfully. Try to feasibly chain together the positive reward steps to achieve all subgoals and complete the task.
-Obviously, if any of the previous attempts successfully completed the task (100 total reward), you can simply copy all the steps.
-After thinking, make sure to write your action **exactly** in the "Action: single_action" format. It is parsed by a script.
+Obviously, if any of the previous attempts successfully completed the task, you should simply imitate the steps one by one.
+After thinking, make sure to write your action **exactly** in the "Action: single_action" format. Only your **last** action is parsed and executed.
 """
 
     neutral_round_instruction: str = """
 Your location and the environment is reset now. It's your turn.
-Take your time to think and then take the next action.
+Try to complete the task.
 After thinking, make sure to write your action **exactly** in the "Action: single_action" format. It is parsed by a script.
+"""
+
+    explore_and_exploit_instruction: str = """
+Your location and the environment is reset now. It's your turn.
+You get multiple attempts to complete the task.
+At the beginning of each attempt, decide whether to explore or exploit.
+To explore, look at the previous attempts and try to construct a plan that is different from every single one of the previous attempts, while making sure it is feasible as well.
+To exploit, look at the previous high reward attempts and based on what they're doing right, stitch together an improved action sequence. Obviously, if any of them successfully completed the task, you should simply copy all the steps.
+After thinking, make sure to write your action **exactly** in the "Action: single_action" format. It is parsed by a script.
+"""
+
+    reflexion_instruction: str = """
+Look at the previous attempts and reflect on:
+1. What actions worked well and why
+2. What actions didn't work and why
+3. What you learned about the task requirements
+4. What you would do differently
+This reflection should help the agent for its next attempt.
 """
 
     available_actions: str = """
@@ -189,9 +209,9 @@ def parse_args():
     """
     # Parse command line arguments
     default_config = OmegaConf.structured(SciWorldConfig)  # Start with code defaults
-    OmegaConf.set_struct(default_config, False)
     cli_conf = OmegaConf.from_cli()
     config = OmegaConf.merge(default_config, cli_conf)
+    OmegaConf.set_struct(config, False)
 
     # Runtime modifications
     
@@ -218,9 +238,11 @@ def parse_args():
     output_path = Path(base_path) / config.sw_output_path / config.icrl_mode.value / postfix
     config.sw_output_path = str(output_path)
 
-    config.no_rewards = config.icrl_mode == Ablation.NO_REWARDS
-
     config.is_openrouter = '/' in config.model_name
+
+    # sanity checks
+    assert sum([config.explore_only, config.explore_and_exploit]) <= 1, "Only one of explore_only or explore_and_exploit can be true"
+    assert sum([config.positive_only, config.no_rewards, config.zero_out_rewards]) <= 1, "Only one of positive_only, no_rewards, or zero_out_rewards can be true"
 
     # save config
     output_path.mkdir(parents=True, exist_ok=True)
@@ -332,6 +354,7 @@ class Attempt:
     raw_prompts: list[dict] = field(default_factory=list)  # the whole messages objects given to the api at each step
     rewards: list[float] = field(default_factory=list)     # rewards from the model
     attempt_prompts: list[dict] = field(default_factory=list)  # has rewards embedded
+    extra_fields: dict = field(default_factory=dict)
     
     def get_processed_attempt_prompts(self, config):
         def predicate(reward):
@@ -346,6 +369,8 @@ class Attempt:
         if config.positive_only:
             if modified_rewards[-1] < 0:
                 modified_rewards[-1] = 0
+        if config.zero_out_rewards:
+            modified_rewards = [0] * len(modified_rewards)
 
         if not config.concise_attempts:
             if not config.no_rewards:
@@ -403,14 +428,16 @@ def save_data_snapshot(data, config, filename, delete=None):
             'bootstrap_attempts': {
                 attempt_id: {
                     'rewards': attempt.rewards,
-                    'attempt_prompts': attempt.attempt_prompts
+                    'attempt_prompts': attempt.attempt_prompts,
+                    'extra_fields': attempt.extra_fields
                 } for attempt_id, attempt in env_data.get('bootstrap_attempts', {}).items()
             },
             'round_attempts': {
                 round_id: {
                     attempt_id: {
                         'rewards': attempt.rewards,
-                        'attempt_prompts': attempt.attempt_prompts
+                        'attempt_prompts': attempt.attempt_prompts,
+                        'extra_fields': attempt.extra_fields
                     } for attempt_id, attempt in round_data.items()
                 } for round_id, round_data in env_data.get('round_attempts', {}).items()
             }
@@ -449,7 +476,7 @@ def save_data_snapshot(data, config, filename, delete=None):
         except FileNotFoundError:
             pass
 
-async def run_evaluation(config):
+async def run_evaluation(config: SciWorldConfig):
     """
     Evaluate the model using batch inference.
     
@@ -629,17 +656,20 @@ async def run_evaluation(config):
                                 attempt_buffer.append(single_attempt)
                                 attempt_counter += 1
 
-                        # Take the last config.max_attempts_in_context attempts
-                        attempt_buffer = attempt_buffer[-config.max_attempts_in_context:]
+                        if config.max_attempts_in_context is not None:
+                            # Take the last config.max_attempts_in_context attempts
+                            attempt_buffer = attempt_buffer[-config.max_attempts_in_context:]
                         messages.extend(sum(attempt_buffer, []))
 
                         messages.append({"role": "user", "content": "</Attempts>"})
 
                     # Add instruction based on round type and task description
                     if config.icrl_mode == Ablation.ICRL:
-                        instruction = config.exploration_instruction if round_idx%2==0 else config.exploitation_instruction
+                        if config.explore_only:
+                            instruction = config.exploration_instruction
+                        else:
+                            instruction = config.exploration_instruction if round_idx%2==0 else config.exploitation_instruction
                     elif config.icrl_mode == Ablation.NEUTRAL_PROMPT \
-                        or config.icrl_mode == Ablation.NO_REWARDS \
                         or config.icrl_mode == Ablation.RANDOM_SAMPLING:
                         instruction = config.neutral_round_instruction
                     else:
@@ -686,6 +716,29 @@ async def run_evaluation(config):
             
             return build_prompt
         
+        # def wrapper_reflexion(i):
+        #     env = envs[i]
+        #     env_id = i
+            
+        #     # Initialize round attempt dictionary if it doesn't exist
+        #     if round_idx not in data[env_id]['round_attempts']:
+        #         data[env_id]['round_attempts'][round_idx] = {}
+            
+        #     # Initialize current attempt if it doesn't exist
+        #     if 0 not in data[env_id]['round_attempts'][round_idx]:
+        #         data[env_id]['round_attempts'][round_idx][0] = Attempt()
+            
+        #     # Get current attempt object
+        #     current_attempt = data[env_id]['round_attempts'][round_idx][0]
+            
+        #     first_round = True
+        #     context_prompt = None   
+
+        #     if first_round:
+        #         # normal prompt
+        #     else:
+        #         # 
+                
         # Process environments in parallel
         async with anyio.create_task_group() as tg:
             async def process_env_idx(i):
