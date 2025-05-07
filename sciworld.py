@@ -13,7 +13,7 @@ from openai import AsyncOpenAI
 from collections import defaultdict
 from datetime import datetime
 from dataclasses import dataclass, field
-from typing import Literal, Dict, List, Any
+from typing import Literal, Dict, List, Any, Optional
 from scienceworld import ScienceWorldEnv as ScienceWorldEnvBase
 from sciworld_armap.utils.replace_sciworld_score import sciworld_monkey_patch
 sciworld_monkey_patch()
@@ -43,6 +43,8 @@ class Ablation(Enum):
     ICRL = "icrl"
     NEUTRAL_PROMPT = "neutral_prompt"
     NO_REWARDS = "no_rewards"
+    RANDOM_SAMPLING = "random_sampling"
+    REFLEXION = "reflexion"
 
 @dataclass
 class SciWorldConfig:
@@ -51,10 +53,14 @@ class SciWorldConfig:
     
     # Experiment modes
     icrl_mode: Ablation = Ablation.ICRL
-    no_rewards: bool = False # shorthand
     debug_run: bool = False
     concise_attempts: bool = True
     positive_only: bool = False
+    max_attempts_in_context: Optional[int] = None
+
+    # Shorthands
+    # no_rewards: bool = False # shorthand
+    # is_openrouter: bool = False # shorthand
 
     # Experiment parameters
     num_initial_attempts: int = 2
@@ -183,6 +189,7 @@ def parse_args():
     """
     # Parse command line arguments
     default_config = OmegaConf.structured(SciWorldConfig)  # Start with code defaults
+    OmegaConf.set_struct(default_config, False)
     cli_conf = OmegaConf.from_cli()
     config = OmegaConf.merge(default_config, cli_conf)
 
@@ -199,6 +206,11 @@ def parse_args():
         logger.debug("*"*100)
         logger.debug("Debug run")
         logger.debug("*"*100)
+        
+    if config.icrl_mode == Ablation.RANDOM_SAMPLING:
+        config.num_initial_attempts = 0
+        config.max_attempts_in_context = 0
+        
 
     postfix = datetime.now().strftime("%Y%m%d_%H%M")
     if config.postfix:
@@ -295,7 +307,7 @@ async def converse(client: AsyncOpenAI, f, messages, config, temperature: float 
                 temperature=temperature,
                 extra_body={
                     "provider": {
-                        "allow_fallbacks": False
+                        "allow_fallbacks": True # False apparently doesn't wait and returns None lol
                     } if config.is_openrouter else None
                 }
             )
@@ -590,34 +602,48 @@ async def run_evaluation(config):
                 nonlocal current_attempt
                 
                 if first_round:
-                    prompt = f"{config.task_prompt_cot}\n<Attempts>\nYou can see several attempts below:"
-                    messages.append({"role": "user", "content": prompt})
-                    
-                    # Use a single attempt counter for all attempts
-                    attempt_counter = 1
-                    
-                    # Add all bootstrap attempts
-                    for _, attempt_obj in data[env_id]['bootstrap_attempts'].items():
-                        messages.append({"role": "user", "content": f"Attempt {attempt_counter}:"})
-                        messages.extend(attempt_obj.get_processed_attempt_prompts(config))
-                        attempt_counter += 1
-                    
-                    # Add all previous round attempts
-                    for prev_round_idx in range(round_idx):
-                        for _, attempt_obj in data[env_id]['round_attempts'][prev_round_idx].items():
-                            messages.append({"role": "user", "content": f"Attempt {attempt_counter}:"})
-                            messages.extend(attempt_obj.get_processed_attempt_prompts(config))
+                    prompt = f"{config.task_prompt_cot}"
+
+                    if not config.max_attempts_in_context == 0:
+                        prompt += f"\n<Attempts>\nYou can see several attempts below:"
+                        messages.append({"role": "user", "content": prompt})
+                        
+                        # Use a single attempt counter for all attempts
+                        attempt_buffer = []
+                        attempt_counter = 1
+                        
+                        # Add all bootstrap attempts
+                        for _, attempt_obj in data[env_id]['bootstrap_attempts'].items():
+                            single_attempt = []
+                            single_attempt.append({"role": "user", "content": f"Attempt {attempt_counter}:"})
+                            single_attempt.extend(attempt_obj.get_processed_attempt_prompts(config))
+                            attempt_buffer.append(single_attempt)
                             attempt_counter += 1
-                    
+                        
+                        # Add all previous round attempts
+                        for prev_round_idx in range(round_idx):
+                            for _, attempt_obj in data[env_id]['round_attempts'][prev_round_idx].items():
+                                single_attempt = []
+                                single_attempt.append({"role": "user", "content": f"Attempt {attempt_counter}:"})
+                                single_attempt.extend(attempt_obj.get_processed_attempt_prompts(config))
+                                attempt_buffer.append(single_attempt)
+                                attempt_counter += 1
+
+                        # Take the last config.max_attempts_in_context attempts
+                        attempt_buffer = attempt_buffer[-config.max_attempts_in_context:]
+                        messages.extend(sum(attempt_buffer, []))
+
+                        messages.append({"role": "user", "content": "</Attempts>"})
+
                     # Add instruction based on round type and task description
                     if config.icrl_mode == Ablation.ICRL:
                         instruction = config.exploration_instruction if round_idx%2==0 else config.exploitation_instruction
-                    elif config.icrl_mode == Ablation.NEUTRAL_PROMPT or config.icrl_mode == Ablation.NO_REWARDS:
+                    elif config.icrl_mode == Ablation.NEUTRAL_PROMPT \
+                        or config.icrl_mode == Ablation.NO_REWARDS \
+                        or config.icrl_mode == Ablation.RANDOM_SAMPLING:
                         instruction = config.neutral_round_instruction
                     else:
                         raise ValueError(f"Invalid ablation mode: {config.icrl_mode}")
-                        
-                    messages.append({"role": "user", "content": "</Attempts>"})
                     messages.append({"role": "user", "content": f"""<Instructions>{instruction}</Instructions>\n{env.env.taskdescription()}"""})
                     messages = merge_same_role_messages(messages)
                     
