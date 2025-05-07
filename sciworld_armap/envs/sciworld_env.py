@@ -2,9 +2,8 @@ import re
 import json
 import logging
 from typing import Tuple
-
 from scienceworld import ScienceWorldEnv
-
+from openai import OpenAI
 from ..envs import BaseEnv
 from ..tasks import SciWorldTask
 # from eval_agent.prompt import prompt_with_icl
@@ -51,6 +50,14 @@ max_steps_dict = {
     "mendelian-genetics-unknown-plant": 50
 }
 
+class DummyModel:
+    def __init__(self, api_key):
+        self.client = OpenAI(api_key=api_key)
+
+    def encode(self, text):
+        out = self.client.embeddings.create(input=text, model="text-embedding-3-small")
+        return [x.embedding for x in out.data]
+
 
 class SciWorldEnv(BaseEnv):
     def __init__(
@@ -71,7 +78,10 @@ class SciWorldEnv(BaseEnv):
         # self.env.envStepLimit = self.max_steps # we do it here instead
         self.gold_path = gold_path
         self.state = State()
-        self.sent_transformer_model = SentenceTransformer('sentence-transformers/all-MiniLM-L6-v2', device="cpu")
+        if kwargs.get("api_key", None):
+            self.sent_transformer_model = DummyModel(kwargs.get("api_key"))
+        else:
+            self.sent_transformer_model = SentenceTransformer('sentence-transformers/all-MiniLM-L6-v2', device="cpu")
     
     @staticmethod
     def parse_action(llm_output: str) -> str:
@@ -132,27 +142,30 @@ class SciWorldEnv(BaseEnv):
             action in ['0','1','2','3','4','5','6','7','8','9','10','11','12','13','14','15','16','17','18','19','20'] or \
             (len(valid_actions_list) == 0) ):
             old_num_moves = self.env.get_num_moves()
-            obs_candidate, *_ = self.env.step(llm_output)
+            observation, _, done, info = self.env.step(llm_output)
             new_num_moves = self.env.get_num_moves()
             if old_num_moves == new_num_moves:
                 action_text = llm_output if len(llm_output) <= 20 else f"{llm_output[:20]}..."
                 observation = f"Your generated action '{action_text}' cannot be matched to a valid action."
+                self.state.invalid_action_count += 1
+                self.state.steps += 1
+                self.state.reward = 0
+                observation = self._check_max_steps(observation)
+                self.state.history.append({
+                    "role": "user",
+                    "content": observation,
+                })
+                return observation, self.state
             else:
-                observation = obs_candidate
-            self.state.invalid_action_count += 1
-            self.state.steps += 1
-            self.state.reward = 0
-            observation = self._check_max_steps(observation)
-            self.state.history.append({
-                "role": "user",
-                "content": observation,
-            })
-            return observation, self.state
+                # action is valid, continue normal step
+                pass
+        else:
+            observation, _, done, info = self.env.step(action)
         
         if action is None:
             pdb.set_trace()
         
-        observation, _, done, info = self.env.step(action)
+        # observation, _, done, info = self.env.step(action)
         reward = info['reward']
         self.state.valid_actions_list = info['valid']
         observation = f"Observation: {observation}"

@@ -3,6 +3,9 @@ from nltk.tokenize import sent_tokenize, word_tokenize
 import numpy as np
 from sklearn.metrics.pairwise import cosine_similarity
 
+# Global cache for embeddings
+EMBEDDING_CACHE = {}
+
 STOP_WORDS = ['i', 'me', 'my', 'myself', 'we', 'our', 'ours', 'ourselves',
               'you', 'your', 'yours', 'yourself', 'yourselves', 'he', 'him',
               'his', 'himself', 'she', 'her', 'hers', 'herself', 'it', 'its',
@@ -39,6 +42,24 @@ def remove_stopwords_and_lemmatize(text, do_stemming=False, lemmatize=False):
     return ' '.join(filtered_text_lemmatized)
 
 def get_best_matched_action_using_sent_transformer(allowed_actions, query, model, device="cpu"):
+    # Batch encode with caching
+    def encode_batch(texts):
+        # Identify which texts need encoding
+        to_encode = []
+        
+        for text in texts:
+            if text not in EMBEDDING_CACHE:
+                to_encode.append(text)
+        
+        # Encode new texts in a single batch if any
+        if to_encode:
+            new_embeddings = model.encode(to_encode)
+            for i, text in enumerate(to_encode):
+                EMBEDDING_CACHE[text] = new_embeddings[i]
+                
+        # Return embeddings for all texts
+        return np.array([EMBEDDING_CACHE[text] for text in texts])
+
     # print(f"size of allowed_actions: {len(allowed_actions)}")
     if query in allowed_actions:
         return query, [(query, 1.0)]
@@ -68,10 +89,15 @@ def get_best_matched_action_using_sent_transformer(allowed_actions, query, model
     # print(f"size of allowed_actions_filtered: {len(allowed_actions_filtered)}")
 
     # Second pass: Use the sentence transformer to find the best-matched action
-    action_list_embeddings = model.encode(allowed_actions_filtered)
-    query_embeddings = model.encode([query])
+    action_list_embeddings = encode_batch(allowed_actions_filtered)
+    
+    # Handle query embedding
+    if query not in EMBEDDING_CACHE:
+        EMBEDDING_CACHE[query] = model.encode([query])[0]
+    query_embedding = EMBEDDING_CACHE[query]
+    
     sim = cosine_similarity(
-        query_embeddings,
+        [query_embedding],
         action_list_embeddings
     )
     max_id = np.argmax(sim)

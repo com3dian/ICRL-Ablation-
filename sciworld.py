@@ -24,7 +24,7 @@ from enum import Enum
 import colorama
 import copy
 import dotenv
-
+import pdb
 dotenv.load_dotenv()
 
 # Set up logging
@@ -50,33 +50,22 @@ class SciWorldConfig:
     
     # Experiment modes
     icrl_mode: Ablation = Ablation.ICRL
-    # no_reward: bool = False
-    # zero_reward: bool = False
     debug_run: bool = False
-    concise_attempts: bool = False
-    
+    concise_attempts: bool = True
+
+    # Experiment parameters
     num_initial_attempts: int = 2
-    # api_eval: bool = True
     max_env_steps: int = 15
+    num_envs: int = 4
+    rounds: int = 50
     
     # Model configuration
     # model_name: str = "gpt-4.1-mini"
     # model_name: str = "gpt-4.1-nano-2025-04-14"
     model_name: str = "google/gemini-2.0-flash-001"
+    use_openai_embedding: bool = True
     exploration_temperature: float = 1.0  
-    exploitation_temperature: float = 1.0
-    # exploitation_temperature: float = 1.0
-    # judge_model_name: str = "gpt-4.1-mini"
-    # checkpoint_path: str = "google/gemma-7b-it"  # Only for reference
-    # base_model_id: str = "google/gemma-7b-it"    # For reference and tokenizer loading
-    
-    # split: str = "test"
-    max_eval_samples: int = 45
-    num_envs: int = 4
-    
-    # Evaluation parameters
-    rounds: int = 50
-    # max_new_tokens: int = 1000
+    exploitation_temperature: float = 0.1
     
     # OpenAI API key
     api_key: str = "sk-C8z62BDhmo4EW1bqOn2TTmdFR29ocUeZXLExkdmGS1T3BlbkFJQcA3zOug-aNTm98KC0Wjsv549b3OgxEGn9TKJknXMA"
@@ -122,17 +111,17 @@ After thinking, make sure to write your action in the "Action: single_action" fo
 # Look at the previous high reward attempts and inspired by what they're doing right, try to construct a plan that successfully completes the task. If any of them successfully completed the task, try to do the same, if not, try to stitch together their best parts somehow. Similarly, specifically avoid the actions with negative rewards.
 # After thinking, make sure to write your action in the "Action: single_action" format. It is parsed by a script.
 # """
-#     exploitation_instruction: str = """
-# Your location and the environment is reset now. It's your turn.
-# Look at the previous high reward attempts/actions and based on what they're doing right, stitch together an improved action sequence. Obviously, if any of them successfully completed the task, simply copy it.
-# After thinking, make sure to write your action in the "Action: single_action" format. It is parsed by a script.
-# """
     exploitation_instruction: str = """
 Your location and the environment is reset now. It's your turn.
-Look at the previous attempts. The steps with positive rewards are the ones that have achieved a subgoal successfully. Try to feasibly chain together the positive reward steps to achieve all subgoals and complete the task.
-Obviously, if any of the previous attempts successfully completed the task (100 total reward), you can simply copy all the steps.
+Look at the previous high reward attempts/actions and based on what they're doing right, stitch together an improved action sequence. Obviously, if any of them successfully completed the task, simply copy it.
 After thinking, make sure to write your action in the "Action: single_action" format. It is parsed by a script.
 """
+#     exploitation_instruction: str = """
+# Your location and the environment is reset now. It's your turn.
+# Look at the previous attempts. The steps with positive rewards are the ones that have achieved a subgoal successfully. Try to feasibly chain together the positive reward steps to achieve all subgoals and complete the task.
+# Obviously, if any of the previous attempts successfully completed the task (100 total reward), you can simply copy all the steps.
+# After thinking, make sure to write your action in the "Action: single_action" format. It is parsed by a script.
+# """
 
     neutral_round_instruction: str = """
 Your location and the environment is reset now. It's your turn.
@@ -266,7 +255,8 @@ def load_envs(num_envs, config, gold_path=False, micro_repeat=1):
                 task=task,
                 env=base_env,
                 gold_path=gold_path,
-                max_env_steps=config.max_env_steps
+                max_env_steps=config.max_env_steps,
+                api_key=config.api_key if config.use_openai_embedding else None
             )
             
             sciworld_env.reset()
@@ -480,6 +470,10 @@ async def run_evaluation(config):
 
                 prompt, state = env.step(messages[-1]["content"])
                 context_prompt = prompt + "\nAvailable objects: " + ', '.join(env.env.get_possible_objects())
+
+                # async debug
+                if 'Task Failed. You have done something wrong' in prompt and not state.finished:
+                    pdb.set_trace(header="task failed but not finished")
                 
                 # Record the reward
                 current_attempt.rewards.append(state.reward)
