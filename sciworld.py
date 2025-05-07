@@ -41,7 +41,8 @@ base_path = os.getcwd()
 
 class Ablation(Enum):
     ICRL = "icrl"
-    REJECTION_SAMPLING = "rejection_sampling"
+    NEUTRAL_PROMPT = "neutral_prompt"
+    NO_REWARDS = "no_rewards"
 
 @dataclass
 class SciWorldConfig:
@@ -50,6 +51,7 @@ class SciWorldConfig:
     
     # Experiment modes
     icrl_mode: Ablation = Ablation.ICRL
+    no_rewards: bool = False # shorthand
     debug_run: bool = False
     concise_attempts: bool = True
 
@@ -65,7 +67,7 @@ class SciWorldConfig:
     model_name: str = "google/gemini-2.0-flash-001"
     use_openai_embedding: bool = True
     exploration_temperature: float = 1.0  
-    exploitation_temperature: float = 0.1
+    exploitation_temperature: float = 1.0
     
     # OpenAI API key
     api_key: str = "sk-C8z62BDhmo4EW1bqOn2TTmdFR29ocUeZXLExkdmGS1T3BlbkFJQcA3zOug-aNTm98KC0Wjsv549b3OgxEGn9TKJknXMA"
@@ -180,25 +182,13 @@ def parse_args():
     """
     # Parse command line arguments
     default_config = OmegaConf.structured(SciWorldConfig)  # Start with code defaults
-
     cli_conf = OmegaConf.from_cli()
-
-    # CLI arguments always have highest priority
     config = OmegaConf.merge(default_config, cli_conf)
+
+    # Runtime modifications
     
     config.task_prompt_cot = config.task_prompt_cot.format(available_actions=config.available_actions)
 
-    # Create a timestamped output path
-    postfix = datetime.now().strftime("%Y%m%d_%H%M")
-    if config.postfix:
-        postfix = postfix + "_" + config.postfix
-    output_path = Path(base_path) / config.sw_output_path / config.icrl_mode.value / postfix
-    config.sw_output_path = str(output_path)
-    
-    # Create output directory if it doesn't exist
-    output_path.mkdir(parents=True, exist_ok=True)
-    
-    # Apply debug mode settings if enabled
     if config.debug_run:
         config.num_envs = 1
         config.rounds = 10
@@ -208,8 +198,17 @@ def parse_args():
         logger.debug("*"*100)
         logger.debug("Debug run")
         logger.debug("*"*100)
-        
+
+    postfix = datetime.now().strftime("%Y%m%d_%H%M")
+    if config.postfix:
+        postfix = postfix + "_" + config.postfix
+    output_path = Path(base_path) / config.sw_output_path / config.icrl_mode.value / postfix
+    config.sw_output_path = str(output_path)
+
+    config.no_rewards = config.icrl_mode == Ablation.NO_REWARDS
+
     # save config
+    output_path.mkdir(parents=True, exist_ok=True)
     with open(output_path / "config.yaml", "w") as f:
         OmegaConf.save(config, f)
     
@@ -318,7 +317,8 @@ class Attempt:
         attempt_prompts_copy = copy.deepcopy(self.attempt_prompts)
 
         if not config.concise_attempts:
-            attempt_prompts_copy[-1]['content'] += f" (Total reward: {sum(self.rewards)})"
+            if not config.no_rewards:
+                attempt_prompts_copy[-1]['content'] += f" (Total reward: {sum(self.rewards)})"
             return attempt_prompts_copy
         else: 
             """
@@ -329,20 +329,21 @@ class Attempt:
             """
             content = "(Interaction summary)\n"
             content += attempt_prompts_copy[0]['content']
-            content += "\nActions and respective rewards:\n"
+            content += "\nActions and respective rewards:\n" if not config.no_rewards else "Actions:\n"
             action_idx = 0
             for attempt_prompt in attempt_prompts_copy:
                 if attempt_prompt['role'] == "assistant":
                     action = SciWorldEnv.parse_action(attempt_prompt['content'])
                     if action_idx == 0:
-                        content += f"{action} (reward={self.rewards[0]})"
+                        content += f"{action} (reward={self.rewards[0]})" if not config.no_rewards else f"{action}"
                     else:
-                        content += f"-> {action} (reward={self.rewards[action_idx]})"
+                        content += f"-> {action} (reward={self.rewards[action_idx]})" if not config.no_rewards else f"-> {action}"
                     action_idx += 1
-            content += f"\nTotal reward: {sum(self.rewards)}, Outcome: {attempt_prompts_copy[-1]['content']}"
+            content += f"\nTotal reward: {sum(self.rewards)}, Outcome: {attempt_prompts_copy[-1]['content']}" \
+                if not config.no_rewards else f"\nOutcome: {attempt_prompts_copy[-1]['content']}"
             return [{"role": "user", "content": content}]
 
-def save_data_snapshot(data, config, filename):
+def save_data_snapshot(data, config, filename, delete):
     """
     Save a snapshot of the data to a file
     
@@ -395,6 +396,10 @@ def save_data_snapshot(data, config, filename):
     raw_prompts_filename = f"raw_prompts_{filename}"
     with open(output_path / raw_prompts_filename, "w") as f:
         json.dump(raw_prompts_data, f, indent=2)
+        
+    if delete:
+        os.remove(output_path / delete)
+        os.remove(output_path / f"raw_prompts_{delete}")
     
 
 async def run_evaluation(config):
@@ -479,7 +484,7 @@ async def run_evaluation(config):
                 current_attempt.rewards.append(state.reward)
                 
                 if not state.finished:
-                    attempt_prompt = f" (reward: {state.reward})" + prompt + "\nAvailable objects: " + ', '.join(env.env.get_possible_objects())
+                    attempt_prompt = prompt + "\nAvailable objects: " + ', '.join(env.env.get_possible_objects())
                     current_attempt.attempt_prompts.append({"role": "user", "content": attempt_prompt})
                     augmented_prompt = prompt + "\n" + config.available_actions + "\nAvailable objects: " + ', '.join(env.env.get_possible_objects())
                     messages.append({"role": "user", "content": augmented_prompt})
@@ -489,7 +494,7 @@ async def run_evaluation(config):
                     # save_data_snapshot(data, config, "bootstrap_attempts.json")
                     return messages, False
                 else:
-                    attempt_prompt = f" (reward: {state.reward})" + prompt
+                    attempt_prompt = prompt
                     current_attempt.attempt_prompts.append({"role": "user", "content": attempt_prompt})
                     messages.append({"role": "user", "content": prompt})
                     logger.info(f"{colorama.Fore.RED + messages[-1]['role']} {'*'*100}")
@@ -571,10 +576,10 @@ async def run_evaluation(config):
                     # Add instruction based on round type and task description
                     if config.icrl_mode == Ablation.ICRL:
                         instruction = config.exploration_instruction if round_idx%2==0 else config.exploitation_instruction
-                    elif config.icrl_mode == Ablation.REJECTION_SAMPLING:
+                    elif config.icrl_mode == Ablation.NEUTRAL_PROMPT or config.icrl_mode == Ablation.NO_REWARDS:
                         instruction = config.neutral_round_instruction
                     else:
-                        instruction = config.neutral_round_instruction
+                        raise ValueError(f"Invalid ablation mode: {config.icrl_mode}")
                         
                     messages.append({"role": "user", "content": f"""<Instructions>\n{instruction}\n</Instructions>\n{env.env.taskdescription()}"""})
                     messages = merge_same_role_messages(messages)
@@ -602,13 +607,13 @@ async def run_evaluation(config):
                     current_attempt.rewards.append(state.reward)
                     
                     if not state.finished:
-                        attempt_prompt = f" (reward: {state.reward})" + prompt + "\nAvailable objects: " + ', '.join(env.env.get_possible_objects())
+                        attempt_prompt = prompt + "\nAvailable objects: " + ', '.join(env.env.get_possible_objects())
                         current_attempt.attempt_prompts.append({"role": "user", "content": attempt_prompt})
                         augmented_prompt = prompt + "\n" + config.available_actions + "\nAvailable objects: " + ', '.join(env.env.get_possible_objects())
                         messages.append({"role": "user", "content": augmented_prompt})
                         return messages, False
                     else:
-                        attempt_prompt = f" (reward: {state.reward})" + prompt
+                        attempt_prompt = prompt
                         current_attempt.attempt_prompts.append({"role": "user", "content": attempt_prompt})
                         messages.append({"role": "user", "content": prompt})
                         # Save snapshot after each completed round
@@ -620,6 +625,7 @@ async def run_evaluation(config):
         # Process environments in parallel
         async with anyio.create_task_group() as tg:
             async def process_env_idx(i):
+                assert config.exploration_temperature == config.exploitation_temperature == 1.0 or config.icrl_mode == Ablation.ICRL, "Exploration and exploitation temp only supported for ICRL"
                 temperature = config.exploration_temperature if round_idx % 2 == 0 else config.exploitation_temperature
                 await converse(client, wrapper2(i), [], config, temperature=temperature)
             
@@ -627,7 +633,7 @@ async def run_evaluation(config):
                 tg.start_soon(process_env_idx, i)
         
         # Save data snapshot after each round is complete
-        save_data_snapshot(data, config, f"sciworld_data_round_{round_idx}_final.json")
+        save_data_snapshot(data, config, f"sciworld_data_round_{round_idx}_final.json", delete=f"sciworld_data_round_{round_idx-1}_final.json")
 
         # Print reward average for each sample in the current round
         for i in range(config.num_envs):
