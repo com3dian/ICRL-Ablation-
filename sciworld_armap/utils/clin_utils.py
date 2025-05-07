@@ -82,7 +82,7 @@ def get_best_matched_action_using_sent_transformer(allowed_actions, query, model
     if "cuda" in device:
         max_filtered_actions = 100000
     else:
-        max_filtered_actions = 1000
+        max_filtered_actions = 10000
 
     allowed_actions_filtered = [allowed_actions[ind] for ind in indices_actions_sorted_desc_word_sim[:max_filtered_actions]]
     # print(f"actions_sorted_desc_word_sim: {allowed_actions_filtered[0:10]}")

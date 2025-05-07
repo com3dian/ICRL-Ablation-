@@ -138,7 +138,7 @@ class SciWorldEnv(BaseEnv):
 
             best_match_score = topN[0][1]
 
-        if not (best_match_score > 0.9 or \
+        if not (best_match_score > 0.8 or \
             action in ['0','1','2','3','4','5','6','7','8','9','10','11','12','13','14','15','16','17','18','19','20'] or \
             (len(valid_actions_list) == 0) ):
             old_num_moves = self.env.get_num_moves()
