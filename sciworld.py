@@ -351,14 +351,14 @@ class Attempt:
                         action = action[:100] + "..."
                     if action_idx == 0:
                         if predicate(modified_rewards[0]):
-                            content += f"{action}"
-                        else:
                             content += f"{action} (reward={modified_rewards[0]})"
+                        else:
+                            content += f"{action}"
                     else:
                         if predicate(modified_rewards[action_idx]):
-                            content += f" -> {action}"
-                        else:
                             content += f" -> {action} (reward={modified_rewards[action_idx]})"
+                        else:
+                            content += f" -> {action}"
                     action_idx += 1
             outcome = attempt_prompts_copy[-1]['content'].split("\n")[-1]
             content += f"\nTotal reward: {sum(modified_rewards)}, Outcome: {outcome}" \
@@ -536,7 +536,7 @@ async def run_evaluation(config):
     # Replace ThreadPoolExecutor with anyio.create_task_group
     async with anyio.create_task_group() as tg:
         async def process_env(i):
-            await converse(client, wrapper(i), golden_attempts.copy(), config)
+            await converse(client, wrapper(i), copy.deepcopy(golden_attempts), config)
         
         for i in range(len(envs)):
             tg.start_soon(process_env, i)
