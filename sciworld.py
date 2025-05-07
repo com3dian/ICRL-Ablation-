@@ -54,6 +54,7 @@ class SciWorldConfig:
     no_rewards: bool = False # shorthand
     debug_run: bool = False
     concise_attempts: bool = True
+    positive_only: bool = False
 
     # Experiment parameters
     num_initial_attempts: int = 2
@@ -95,7 +96,7 @@ FOCUS is a extremely critical action that can be only used the number of times '
     exploration_instruction: str = """
 Your location and the environment is reset now. It's your turn.
 Look at the previous attempts and try to construct a plan for doing the task that is different from every single one of the previous attempts, while making sure it is feasible as well. 
-After thinking, make sure to write your action in the "Action: single_action" format. It is parsed by a script.
+After thinking, make sure to write your action **exactly** in the "Action: single_action" format. It is parsed by a script.
 """
 
 #     exploitation_instruction: str = """
@@ -113,22 +114,22 @@ After thinking, make sure to write your action in the "Action: single_action" fo
 # Look at the previous high reward attempts and inspired by what they're doing right, try to construct a plan that successfully completes the task. If any of them successfully completed the task, try to do the same, if not, try to stitch together their best parts somehow. Similarly, specifically avoid the actions with negative rewards.
 # After thinking, make sure to write your action in the "Action: single_action" format. It is parsed by a script.
 # """
-    exploitation_instruction: str = """
-Your location and the environment is reset now. It's your turn.
-Look at the previous high reward attempts/actions and based on what they're doing right, stitch together an improved action sequence. Obviously, if any of them successfully completed the task, simply copy it.
-After thinking, make sure to write your action in the "Action: single_action" format. It is parsed by a script.
-"""
 #     exploitation_instruction: str = """
 # Your location and the environment is reset now. It's your turn.
-# Look at the previous attempts. The steps with positive rewards are the ones that have achieved a subgoal successfully. Try to feasibly chain together the positive reward steps to achieve all subgoals and complete the task.
-# Obviously, if any of the previous attempts successfully completed the task (100 total reward), you can simply copy all the steps.
+# Look at the previous high reward attempts/actions and based on what they're doing right, stitch together an improved action sequence. Obviously, if any of them successfully completed the task, simply copy it.
 # After thinking, make sure to write your action in the "Action: single_action" format. It is parsed by a script.
 # """
+    exploitation_instruction: str = """
+Your location and the environment is reset now. It's your turn.
+Look at the previous attempts. The steps with positive rewards are the ones that have achieved a subgoal successfully. Try to feasibly chain together the positive reward steps to achieve all subgoals and complete the task.
+Obviously, if any of the previous attempts successfully completed the task (100 total reward), you can simply copy all the steps.
+After thinking, make sure to write your action **exactly** in the "Action: single_action" format. It is parsed by a script.
+"""
 
     neutral_round_instruction: str = """
 Your location and the environment is reset now. It's your turn.
 Take your time to think and then take the next action.
-After thinking, make sure to write your action in the "Action: single_action" format. It is parsed by a script.
+After thinking, make sure to write your action **exactly** in the "Action: single_action" format. It is parsed by a script.
 """
 
     available_actions: str = """
@@ -314,11 +315,22 @@ class Attempt:
     attempt_prompts: list[dict] = field(default_factory=list)  # has rewards embedded
     
     def get_processed_attempt_prompts(self, config):
+        def predicate(reward):
+            if config.no_rewards:
+                return False
+            if config.positive_only:
+                return reward > 0
+            return True
+        
         attempt_prompts_copy = copy.deepcopy(self.attempt_prompts)
+        modified_rewards = copy.deepcopy(self.rewards)
+        if config.positive_only:
+            if modified_rewards[-1] < 0:
+                modified_rewards[-1] = 0
 
         if not config.concise_attempts:
             if not config.no_rewards:
-                attempt_prompts_copy[-1]['content'] += f" (Total reward: {sum(self.rewards)})"
+                attempt_prompts_copy[-1]['content'] += f" (Total reward: {sum(modified_rewards)})"
             return attempt_prompts_copy
         else: 
             """
@@ -328,22 +340,32 @@ class Attempt:
             sum of rewards: 10, final observation: blah blah blah
             """
             content = "(Interaction summary)\n"
-            content += attempt_prompts_copy[0]['content']
-            content += "\nActions and respective rewards:\n" if not config.no_rewards else "Actions:\n"
+            # content += attempt_prompts_copy[0]['content']
+            # content += "\nActions and respective rewards:\n" if not config.no_rewards else "Actions:\n"
             action_idx = 0
             for attempt_prompt in attempt_prompts_copy:
                 if attempt_prompt['role'] == "assistant":
                     action = SciWorldEnv.parse_action(attempt_prompt['content'])
+                    action = re.sub(r'\s+', ' ', action)
+                    if len(action) > 100:
+                        action = action[:100] + "..."
                     if action_idx == 0:
-                        content += f"{action} (reward={self.rewards[0]})" if not config.no_rewards else f"{action}"
+                        if predicate(modified_rewards[0]):
+                            content += f"{action}"
+                        else:
+                            content += f"{action} (reward={modified_rewards[0]})"
                     else:
-                        content += f"-> {action} (reward={self.rewards[action_idx]})" if not config.no_rewards else f"-> {action}"
+                        if predicate(modified_rewards[action_idx]):
+                            content += f" -> {action}"
+                        else:
+                            content += f" -> {action} (reward={modified_rewards[action_idx]})"
                     action_idx += 1
-            content += f"\nTotal reward: {sum(self.rewards)}, Outcome: {attempt_prompts_copy[-1]['content']}" \
-                if not config.no_rewards else f"\nOutcome: {attempt_prompts_copy[-1]['content']}"
+            outcome = attempt_prompts_copy[-1]['content'].split("\n")[-1]
+            content += f"\nTotal reward: {sum(modified_rewards)}, Outcome: {outcome}" \
+                if not config.no_rewards else f"\nOutcome: {outcome}"
             return [{"role": "user", "content": content}]
 
-def save_data_snapshot(data, config, filename, delete):
+def save_data_snapshot(data, config, filename, delete=None):
     """
     Save a snapshot of the data to a file
     
@@ -351,6 +373,7 @@ def save_data_snapshot(data, config, filename, delete):
         data: Data dictionary to save
         config: Configuration object
         filename: Name of the file to save to
+        delete: Name of the file to delete if it exists
     """
     # Convert data to serializable format
     serializable_data = {}
@@ -398,9 +421,14 @@ def save_data_snapshot(data, config, filename, delete):
         json.dump(raw_prompts_data, f, indent=2)
         
     if delete:
-        os.remove(output_path / delete)
-        os.remove(output_path / f"raw_prompts_{delete}")
-    
+        try:
+            os.remove(output_path / delete)
+        except FileNotFoundError:
+            pass
+        try:
+            os.remove(output_path / f"raw_prompts_{delete}")
+        except FileNotFoundError:
+            pass
 
 async def run_evaluation(config):
     """

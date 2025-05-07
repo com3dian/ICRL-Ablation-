@@ -92,6 +92,7 @@ def get_best_matched_action_using_sent_transformer(allowed_actions, query, model
     action_list_embeddings = encode_batch(allowed_actions_filtered)
     
     # Handle query embedding
+    query = query[:8000]
     if query not in EMBEDDING_CACHE:
         EMBEDDING_CACHE[query] = model.encode([query])[0]
     query_embedding = EMBEDDING_CACHE[query]
