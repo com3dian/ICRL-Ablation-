@@ -153,11 +153,13 @@ cols_to_drop = []
 # df_pos_reward = get_sum_df("/home/kdt3jq/ICRL_LLM/ICRL-for-LLM-Agent/ICL/sw/icrl/20250507_2104") # 29 envs
 # df_pos_reward = get_sum_df("/home/kdt3jq/ICRL_LLM/ICRL-for-LLM-Agent/ICL/sw/icrl/20250507_2111_4.1-mini") # 4.1-mini
 df_pos_reward = get_sum_df("/home/kdt3jq/ICRL_LLM/ICRL-for-LLM-Agent/ICL/sw/icrl/20250508_1114_e&e_but_not") # 29 envs rerun
+# df_pos_reward = get_sum_df("/home/kdt3jq/ICRL_LLM/ICRL-for-LLM-Agent/ICL/sw/icrl/20250511_0031_29_4.1_alsoObs")
 # df_pos_reward = df_pos_reward[(df_pos_reward.index.astype(int) % 2 == 1) | (df_pos_reward.index.astype(int) < 1)]
 
 # df_random_sampling = get_sum_df("/home/kdt3jq/ICRL_LLM/ICRL-for-LLM-Agent/ICL/sw/random_sampling/20250507_1517_random_sampling")
 df_random_sampling = get_sum_df("/home/kdt3jq/ICRL_LLM/ICRL-for-LLM-Agent/ICL/sw/random_sampling/20250510_2108_29_4.1_mini")
 # df_3_attempts = get_sum_df("/home/kdt3jq/ICRL_LLM/ICRL-for-LLM-Agent/ICL/sw/icrl/20250507_1510_3_attempts")
+df_3_attempts = get_sum_df("/home/kdt3jq/ICRL_LLM/ICRL-for-LLM-Agent/ICL/sw/icrl/20250511_1327_29_4.1_3_icl")
 # df_zero_reward = get_sum_df("/home/kdt3jq/ICRL_LLM/ICRL-for-LLM-Agent/ICL/sw/icrl/20250507_1636_zero_rewards")
 # df_zero_reward = get_sum_df("/home/kdt3jq/ICRL_LLM/ICRL-for-LLM-Agent/ICL/sw/icrl/20250508_1751_zero_rewards")
 # df_exploration_only = get_sum_df("/home/kdt3jq/ICRL_LLM/ICRL-for-LLM-Agent/ICL/sw/icrl/20250507_1653_explore_only")
@@ -166,19 +168,19 @@ df_exploration_only = get_sum_df("/home/kdt3jq/ICRL_LLM/ICRL-for-LLM-Agent/ICL/s
 # df_e_and_e = get_sum_df("/home/kdt3jq/ICRL_LLM/ICRL-for-LLM-Agent/ICL/sw/icrl/20250507_2005_e_and_e")
 df_e_and_e = get_sum_df("/home/kdt3jq/ICRL_LLM/ICRL-for-LLM-Agent/ICL/sw/icrl/20250508_1446_e&e") # 29 envs
 df_reflexion = get_sum_df("/home/kdt3jq/ICRL_LLM/ICRL-for-LLM-Agent/ICL/sw/reflexion/20250510_1609_reflexion_29_4.1mini")
-# df_reflexion = get_sum_df("/home/kdt3jq/ICRL_LLM/ICRL-for-LLM-Agent/ICL/sw/reflexion/20250510_1746_reflexion_29")
+# df_reflexion = get_sum_df("/home/kdt3jq/ICRL_LLM/ICRL-for-LLM-Agent/ICL/sw/reflexion/20250510_2332_reflexion_4.1mini_concise")
 
 #%%
-
-plot_per_step_running_max(df_exploration_only, df_pos_reward, df_e_and_e, df_reflexion, df_random_sampling, label_0='Explore Only', label_1='Pos Reward', label_2='E&E', label_3='Reflexion', label_4='Random Sampling')
-plot_per_step(df_exploration_only, df_pos_reward, df_e_and_e, df_reflexion, df_random_sampling, label_0='Explore Only', label_1='Pos Reward', label_2='E&E', label_3='Reflexion', label_4='Random Sampling')
-plot_per_step_gaussian_smoothed(df_exploration_only, df_pos_reward, df_e_and_e, df_reflexion, df_random_sampling, param=1, label_0='Explore Only', label_1='Pos Reward', label_2='E&E', label_3='Reflexion', label_4='Random Sampling')
+plot_per_step_running_max(df_exploration_only, df_pos_reward, df_e_and_e, df_reflexion, df_random_sampling, df_3_attempts, label_0='Explore Only', label_1='Pos Reward', label_2='E&E', label_3='Reflexion', label_4='Random Sampling', label_5='3 Attempts')
+plot_per_step(df_exploration_only, df_pos_reward, df_e_and_e, df_reflexion, df_random_sampling, df_3_attempts, label_0='Explore Only', label_1='Pos Reward', label_2='E&E', label_3='Reflexion', label_4='Random Sampling', label_5='3 Attempts')
+plot_per_step_gaussian_smoothed(df_exploration_only, df_pos_reward, df_e_and_e, df_reflexion, df_random_sampling, df_3_attempts, param=1, label_0='Explore Only', label_1='Pos Reward', label_2='E&E', label_3='Reflexion', label_4='Random Sampling', label_5='3 Attempts')
 # %%
 path = find_sciworld_file("/home/kdt3jq/ICRL_LLM/ICRL-for-LLM-Agent/ICL/sw/reflexion/20250510_1609_reflexion_29_4.1mini", raw_prompts=True)
+# path = find_sciworld_file("/home/kdt3jq/ICRL_LLM/ICRL-for-LLM-Agent/ICL/sw/icrl/20250508_1114_e&e_but_not", raw_prompts=True)
 data = json.load(open(path), object_hook=convert_keys_to_int)
 
 #%%
-round = 20
+round = 15
 env_id = 8
 for i in range(len(data[env_id]['round_attempts'][round][0][-1])):
     print(data[env_id]['round_attempts'][round][0][-1][i]['content'])
@@ -203,3 +205,94 @@ df_reflexion.cummax(axis=0).mean() - df_pos_reward[:len(df_reflexion)].cummax(ax
 df_reflexion.max(axis=0) - df_pos_reward[:len(df_reflexion)].max(axis=0)
 
 # %%
+def get_cost(path):
+    """
+    for each env:
+        round_cost = 0
+        for each round, for each messages in raw_prompts:
+            input_count = len(all except the last one)
+            output_count = len(the last one)
+            cost = cost_input * input_count + cost_output * output_count
+            round_cost += cost
+    """
+    cost_input = .1
+    cost_output = .4
+    # load raw_prompts
+    path = find_sciworld_file(path, raw_prompts=True)
+    data = json.load(open(path), object_hook=convert_keys_to_int)
+    costs = []
+    for env_id in data.keys():
+        for round_idx in data[env_id]['round_attempts'].keys():
+            round_cost = 0
+            for step_idx in range(len(data[env_id]['round_attempts'][round_idx][0])):
+                for message_idx, message in enumerate(data[env_id]['round_attempts'][round_idx][0][step_idx]):
+                    if message_idx < len(data[env_id]['round_attempts'][round_idx][0][step_idx]) - 1:
+                        round_cost += len(message['content']) * cost_input
+                    else:
+                        round_cost += len(message['content']) * cost_output
+            costs.append({'env_id': env_id, 'round_idx': round_idx, 'cost': round_cost})
+    df_cost = pd.DataFrame(costs)
+    df_cost = df_cost.pivot(index='round_idx', columns='env_id', values='cost')
+    return df_cost
+
+def plot_cost_reward_sum(*args, **kwargs):
+    """
+    Plot cost on x-axis, reward sum on y-axis.
+    Input should be pairs of (cost_df, reward_df) for each method.
+    """
+    fig, ax = plt.subplots(figsize=(10, 10))
+    
+    colors = ['b', 'r', 'g', 'c', 'm', 'y', 'k']  # Add more colors if needed
+    markers = ['o', 's', '^', 'D', '*', 'x', '+']  # Different markers for each method
+    
+    # Process pairs of dataframes (cost_df, reward_df)
+    for i in range(0, len(args), 2):
+        if i+1 >= len(args):
+            break
+            
+        cost_df = args[i]
+        reward_df = args[i+1]
+        
+        # Calculate mean cost and running max reward
+        mean_costs = cost_df.cumsum(axis=0).mean(axis=1)
+        running_max_rewards = reward_df.cummax(axis=0).mean(axis=1)
+        
+        color = colors[(i//2) % len(colors)]
+        marker = markers[(i//2) % len(markers)]
+        label = kwargs.get(f'label_{i//2}', f'Method {i//2+1}')
+        
+        ax.plot(mean_costs, running_max_rewards, color=color, marker=marker, 
+                markersize=8, label=label, linewidth=2)
+        
+        # Annotate some points with round numbers
+        for round_idx in range(0, len(mean_costs), 5):
+            if round_idx < len(mean_costs):
+                ax.annotate(f'R{round_idx}', 
+                           (mean_costs.iloc[round_idx], running_max_rewards.iloc[round_idx]),
+                           textcoords="offset points", 
+                           xytext=(0,10), 
+                           ha='center')
+    
+    ax.set_xlabel('Cumulative Cost')
+    ax.set_ylabel('Running Max Reward')
+    ax.grid(True)
+    ax.legend()
+    
+    plt.tight_layout()
+    plt.show()
+
+# %%
+df_cost_reflexion = get_cost("/home/kdt3jq/ICRL_LLM/ICRL-for-LLM-Agent/ICL/sw/reflexion/20250510_2332_reflexion_4.1mini_concise")
+df_reward_sum_reflexion = get_sum_df("/home/kdt3jq/ICRL_LLM/ICRL-for-LLM-Agent/ICL/sw/reflexion/20250510_2332_reflexion_4.1mini_concise")
+df_cost_pos_reward = get_cost("/home/kdt3jq/ICRL_LLM/ICRL-for-LLM-Agent/ICL/sw/icrl/20250508_1114_e&e_but_not")
+df_reward_sum_pos_reward = get_sum_df("/home/kdt3jq/ICRL_LLM/ICRL-for-LLM-Agent/ICL/sw/icrl/20250508_1114_e&e_but_not")
+# %%
+plot_cost_reward_sum(df_cost_reflexion, df_reward_sum_reflexion, df_cost_pos_reward, df_reward_sum_pos_reward, label_0='Reflexion', label_1='Pos Reward')
+# %%
+df_cost_reflexion.cumsum(axis=0).mean(axis=1)
+
+# %%
+df_cost_pos_reward.cumsum(axis=0).mean(axis=1)
+
+# %%
+
