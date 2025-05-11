@@ -471,7 +471,8 @@ def save_data_snapshot(data, config, filename, delete=None):
                 attempt_id: {
                     'rewards': attempt.rewards,
                     'attempt_prompts': attempt.attempt_prompts,
-                    'extra_fields': attempt.extra_fields
+                    'extra_fields': attempt.extra_fields,
+                    'reflexion': attempt.reflexion
                 } for attempt_id, attempt in env_data.get('bootstrap_attempts', {}).items()
             },
             'round_attempts': {
@@ -479,7 +480,8 @@ def save_data_snapshot(data, config, filename, delete=None):
                     attempt_id: {
                         'rewards': attempt.rewards,
                         'attempt_prompts': attempt.attempt_prompts,
-                        'extra_fields': attempt.extra_fields
+                        'extra_fields': attempt.extra_fields,
+                        'reflexion': attempt.reflexion
                     } for attempt_id, attempt in round_data.items()
                 } for round_id, round_data in env_data.get('round_attempts', {}).items()
             }
@@ -852,11 +854,10 @@ async def run_evaluation(config: SciWorldConfig, data: dict = None):
                             print(f"{colorama.Fore.WHITE}{messages[-1]['role']}:\n{messages[-1]['content']}\n{'='*100}")
                         return messages, False
                     else:
-                        messages.append({"role": "user", "content": prompt})
-                        current_attempt.raw_prompts.append(copy.deepcopy(messages))
+                        prompt_reflexion = f"{prompt}\n<Instructions>{config.do_reflexion_instruction}</Instructions>"
 
-                        prompt = f"{prompt}\n<Instructions>{config.do_reflexion_instruction}</Instructions>"
-                        
+                        messages.append({"role": "user", "content": prompt_reflexion})
+                        current_attempt.raw_prompts.append(copy.deepcopy(messages))
                         round = -1
                         if env_id == 0:
                             print(f"{colorama.Fore.WHITE}{messages[-1]['role']}:\n{messages[-1]['content']}\n{'='*100}")
@@ -939,7 +940,8 @@ def load_data(folder_path):
                 raw_prompts=attempt_data.get('raw_prompts', []),
                 rewards=attempt_data.get('rewards', []),
                 attempt_prompts=attempt_data.get('attempt_prompts', []),
-                extra_fields=attempt_data.get('extra_fields', {})
+                extra_fields=attempt_data.get('extra_fields', {}),
+                reflexion=attempt_data.get('reflexion', False)
             )
             bootstrap_attempts[attempt_id] = attempt
         env_data['bootstrap_attempts'] = bootstrap_attempts
@@ -953,7 +955,8 @@ def load_data(folder_path):
                     raw_prompts=attempt_data.get('raw_prompts', []),
                     rewards=attempt_data.get('rewards', []),
                     attempt_prompts=attempt_data.get('attempt_prompts', []),
-                    extra_fields=attempt_data.get('extra_fields', {})
+                    extra_fields=attempt_data.get('extra_fields', {}),
+                    reflexion=attempt_data.get('reflexion', False)
                 )
                 round_attempts[round_id][attempt_id] = attempt
         env_data['round_attempts'] = round_attempts
