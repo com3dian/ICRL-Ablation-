@@ -847,7 +847,7 @@ async def run_evaluation(config: SciWorldConfig, data: dict = None):
                         messages.append({"role": "user", "content": "<Attempt>"})
                         messages.extend(current_attempt.get_processed_attempt_prompts(config))
                         messages.append({"role": "user", "content": "</Attempt>"})
-                        prompt = f"{prompt}\n<Instructions>{config.do_reflexion_instruction}</Instructions>"
+                        prompt = f"<Instructions>{config.do_reflexion_instruction}</Instructions>"
                         messages.append({"role": "user", "content": prompt})
                         messages = merge_same_role_messages(messages)
                         
