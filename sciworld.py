@@ -403,11 +403,34 @@ class Attempt:
             Actions and respective rewards: action1 (reward1) -> action2 (reward2) -> ... -> actionN (rewardN)
             sum of rewards: 10, final observation: blah blah blah
             """
+            # content = "(Interaction summary)\n"
+            # action_idx = 0
+            # for attempt_prompt in attempt_prompts_copy:
+            #     if attempt_prompt['role'] == "assistant":
+            #         action = SciWorldEnv.parse_action(attempt_prompt['content'])
+            #         action = re.sub(r'\s+', ' ', action)
+            #         if len(action) > 100:
+            #             action = action[:100] + "..."
+            #         if action_idx == 0:
+            #             if predicate(modified_rewards[0]):
+            #                 content += f"{action} (reward={modified_rewards[0]})"
+            #             else:
+            #                 content += f"{action}"
+            #         else:
+            #             if predicate(modified_rewards[action_idx]):
+            #                 content += f" -> {action} (reward={modified_rewards[action_idx]})"
+            #             else:
+            #                 content += f" -> {action}"
+            #         action_idx += 1
+            # outcome = attempt_prompts_copy[-1]['content'].split("\n")[-1]
+            # content += f"\nTotal reward: {sum(modified_rewards)}, Outcome: {outcome}" \
+            #     if not config.no_rewards else f"\nOutcome: {outcome}"
+            # return [{"role": "user", "content": content}]
+            
+            
             content = "(Interaction summary)\n"
-            # content += attempt_prompts_copy[0]['content']
-            # content += "\nActions and respective rewards:\n" if not config.no_rewards else "Actions:\n"
             action_idx = 0
-            for attempt_prompt in attempt_prompts_copy:
+            for i, attempt_prompt in enumerate(attempt_prompts_copy):
                 if attempt_prompt['role'] == "assistant":
                     action = SciWorldEnv.parse_action(attempt_prompt['content'])
                     action = re.sub(r'\s+', ' ', action)
@@ -415,18 +438,17 @@ class Attempt:
                         action = action[:100] + "..."
                     if action_idx == 0:
                         if predicate(modified_rewards[0]):
-                            content += f"{action} (reward={modified_rewards[0]})"
+                            content += f"{action} -> {attempt_prompts_copy[i+1]['content']} (reward={modified_rewards[0]})\n"
                         else:
-                            content += f"{action}"
+                            content += f"{action} -> {attempt_prompts_copy[i+1]['content']}\n"
                     else:
                         if predicate(modified_rewards[action_idx]):
-                            content += f" -> {action} (reward={modified_rewards[action_idx]})"
+                            content += f" -> {action} -> {attempt_prompts_copy[i+1]['content']} (reward={modified_rewards[action_idx]})\n"
                         else:
-                            content += f" -> {action}"
+                            content += f" -> {action} -> {attempt_prompts_copy[i+1]['content']}\n"
                     action_idx += 1
-            outcome = attempt_prompts_copy[-1]['content'].split("\n")[-1]
-            content += f"\nTotal reward: {sum(modified_rewards)}, Outcome: {outcome}" \
-                if not config.no_rewards else f"\nOutcome: {outcome}"
+            if not config.no_rewards:
+                content += f"\nTotal reward: {sum(modified_rewards)}"
             return [{"role": "user", "content": content}]
 
 def save_data_snapshot(data, config, filename, delete=None):
