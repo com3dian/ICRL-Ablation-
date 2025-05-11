@@ -371,11 +371,11 @@ class Attempt:
     rewards: list[float] = field(default_factory=list)     # rewards from the model
     attempt_prompts: list[dict] = field(default_factory=list)  # has rewards embedded
     extra_fields: dict = field(default_factory=dict)
-    reflexion: bool = False
+    # reflexion: bool = False
 
     def get_processed_attempt_prompts(self, config):
-        if self.reflexion:
-            return self.attempt_prompts
+        # if self.reflexion:
+            # return self.attempt_prompts
 
         def predicate(reward):
             if config.no_rewards:
@@ -768,19 +768,22 @@ async def run_evaluation(config: SciWorldConfig, data: dict = None):
                 data[env_id]['round_attempts'][round_idx] = {}
             
             # Initialize current attempt
-            data[env_id]['round_attempts'][round_idx][0] = Attempt(reflexion=True)
+            # data[env_id]['round_attempts'][round_idx][0] = Attempt(reflexion=True)
+            data[env_id]['round_attempts'][round_idx][0] = Attempt()
             
             # Get current attempt object
             current_attempt = data[env_id]['round_attempts'][round_idx][0]
+            current_attempt.extra_fields['reflections'] = []
             
             round = 0
             context_prompt = None   
+            messages_copy = None
 
             def build_prompt(messages):
                 nonlocal round
                 nonlocal context_prompt
                 nonlocal current_attempt
-                
+                nonlocal messages_copy
                 if round == 0:
                     messages.append({"role": "user", "content": f"{config.task_prompt_cot}"})
 
@@ -792,7 +795,8 @@ async def run_evaluation(config: SciWorldConfig, data: dict = None):
                                 messages.append({"role": "assistant", "content": f"<Reflections>\nPrevious reflections:"})
                                 added_preamble = True
                             messages.append({"role": "assistant", "content": "<Reflection>"})
-                            messages.extend(attempt_obj.get_processed_attempt_prompts(config))
+                            # messages.extend(attempt_obj.get_processed_attempt_prompts(config))
+                            messages.extend(attempt_obj.extra_fields['reflections'])
                             messages.append({"role": "assistant", "content": "</Reflection>"})
                     if added_preamble:
                         messages.append({"role": "assistant", "content": "</Reflections>"})
@@ -800,7 +804,8 @@ async def run_evaluation(config: SciWorldConfig, data: dict = None):
                     messages.append({"role": "user", "content": f"<Instructions>{config.use_reflexion_instruction}</Instructions>\n{env.env.taskdescription()}"})
                     
                     messages = merge_same_role_messages(messages)
-                    current_attempt.raw_prompts.append(copy.deepcopy(messages))
+                    messages_copy = copy.deepcopy(messages)
+                    current_attempt.raw_prompts.append(copy.deepcopy(messages_copy))
 
                     if env_id == 0:
                         print(f"{colorama.Fore.WHITE}{messages[-1]['role']}:\n{messages[-1]['content']}\n{'='*100}")
@@ -809,6 +814,8 @@ async def run_evaluation(config: SciWorldConfig, data: dict = None):
                     return messages, False
                 elif round > 0:
                     assert messages[-1]["role"] == "assistant", "It's assistant's turn"
+                    current_attempt.attempt_prompts.append({"role": "assistant", "content": messages[-1]["content"]})
+                    
                     if env_id == 0:
                         print(f"{colorama.Fore.GREEN}{messages[-1]['role']}:\n{messages[-1]['content']}\n{'='*100}")
                     
@@ -823,6 +830,8 @@ async def run_evaluation(config: SciWorldConfig, data: dict = None):
                     current_attempt.rewards.append(state.reward)
                     
                     if not state.finished:
+                        attempt_prompt = prompt + "\nAvailable objects: " + ', '.join(env.env.get_possible_objects())
+                        current_attempt.attempt_prompts.append({"role": "user", "content": attempt_prompt})
                         augmented_prompt = prompt + "\n" + config.available_actions + "\nAvailable objects: " + ', '.join(env.env.get_possible_objects())
                         messages.append({"role": "user", "content": augmented_prompt})
                         current_attempt.raw_prompts.append(copy.deepcopy(messages))
@@ -831,9 +840,16 @@ async def run_evaluation(config: SciWorldConfig, data: dict = None):
                         return messages, False
                     else:
                         messages.append({"role": "user", "content": prompt})
+                        current_attempt.attempt_prompts.append({"role": "user", "content": prompt})
                         current_attempt.raw_prompts.append(copy.deepcopy(messages))
 
+                        messages = messages_copy
+                        messages.append({"role": "user", "content": "<Attempt>"})
+                        messages.extend(current_attempt.get_processed_attempt_prompts(config))
+                        messages.append({"role": "user", "content": "</Attempt>"})
                         prompt = f"{prompt}\n<Instructions>{config.do_reflexion_instruction}</Instructions>"
+                        messages.append({"role": "user", "content": prompt})
+                        messages = merge_same_role_messages(messages)
                         
                         round = -1
                         if env_id == 0:
@@ -843,7 +859,8 @@ async def run_evaluation(config: SciWorldConfig, data: dict = None):
                     assert messages[-1]["role"] == "assistant", "It's assistant's turn"
 
                     current_attempt.raw_prompts.append(copy.deepcopy(messages))
-                    current_attempt.attempt_prompts.append(messages[-1])
+                    # current_attempt.attempt_prompts.append(messages[-1])
+                    current_attempt.extra_fields['reflections'].append(messages[-1])
                     if env_id == 0:
                         print(f"{colorama.Fore.GREEN}{messages[-1]['role']}:\n{messages[-1]['content']}\n{'='*100}")
                     return None, True
