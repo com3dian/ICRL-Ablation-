@@ -60,6 +60,7 @@ class SciWorldConfig:
     no_rewards: bool = False
     explore_only: bool = False
     explore_and_exploit: bool = False
+    max_reflections_in_context: Optional[int] = None
     # Shorthands
     # no_rewards: bool = False # shorthand
     # is_openrouter: bool = False # shorthand
@@ -429,6 +430,14 @@ class Attempt:
                 if not config.no_rewards else f"\nOutcome: {outcome}"
             return [{"role": "user", "content": content}]
 
+    @staticmethod
+    def process_reflexion(reflection_string):
+        # remove any tags, beginning or end
+        reflection_string = re.sub(r'<[^>]*>', '', reflection_string)
+        # remove any "Action:" and all the text after it(including whitespace)
+        reflection_string = re.sub(r'Action:[\s\S]*', '', reflection_string)
+        return reflection_string
+
 def save_data_snapshot(data, config, filename, delete=None):
     """
     Save a snapshot of the data to a file
@@ -789,16 +798,20 @@ async def run_evaluation(config: SciWorldConfig, data: dict = None):
 
                     # add reflections
                     added_preamble = False
+                    reflection_buffer = []
                     for prev_round_idx in range(round_idx):
                         for _, attempt_obj in data[env_id]['round_attempts'][prev_round_idx].items():
-                            if not added_preamble:
-                                messages.append({"role": "assistant", "content": f"<Reflections>\nPrevious reflections:"})
-                                added_preamble = True
+                            reflection_buffer.extend(attempt_obj.extra_fields['reflections'])
+                    
+                    if config.max_reflections_in_context is not None:
+                        reflection_buffer = reflection_buffer[-config.max_reflections_in_context:]
+                    
+                    if reflection_buffer:
+                        messages.append({"role": "assistant", "content": f"Previous reflections:\n<Reflections>"})
+                        for reflection in reflection_buffer:
                             messages.append({"role": "assistant", "content": "<Reflection>"})
-                            # messages.extend(attempt_obj.get_processed_attempt_prompts(config))
-                            messages.extend(attempt_obj.extra_fields['reflections'])
+                            messages.append(reflection)
                             messages.append({"role": "assistant", "content": "</Reflection>"})
-                    if added_preamble:
                         messages.append({"role": "assistant", "content": "</Reflections>"})
                     
                     messages.append({"role": "user", "content": f"<Instructions>{config.use_reflexion_instruction}</Instructions>\n{env.env.taskdescription()}"})
@@ -860,6 +873,7 @@ async def run_evaluation(config: SciWorldConfig, data: dict = None):
 
                     current_attempt.raw_prompts.append(copy.deepcopy(messages))
                     # current_attempt.attempt_prompts.append(messages[-1])
+                    messages[-1]['content'] = Attempt.process_reflexion(messages[-1]['content'])
                     current_attempt.extra_fields['reflections'].append(messages[-1])
                     if env_id == 0:
                         print(f"{colorama.Fore.GREEN}{messages[-1]['role']}:\n{messages[-1]['content']}\n{'='*100}")
