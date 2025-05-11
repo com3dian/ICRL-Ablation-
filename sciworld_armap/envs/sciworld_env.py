@@ -64,8 +64,8 @@ class SciWorldEnv(BaseEnv):
         self,
         task: SciWorldTask,
         env: ScienceWorldEnv,
-        gold_path: bool,
         max_env_steps: int,
+        gold_path: bool = False,
         **kwargs,
     ):
         super().__init__(**kwargs)
