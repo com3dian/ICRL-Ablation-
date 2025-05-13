@@ -364,33 +364,24 @@ def load_envs(num_envs, config, gold_path=False, micro_repeat=1):
         var_num = 0
         
         for _ in range(micro_repeat):
-            while True:
-                try:
-                    base_env = ScienceWorldEnvBase()
-                    # Create SciWorldTask instance
-                    task = SciWorldTask(
-                        task_id=f"{task_name}-{var_num}",
-                        sub_task_name=task_name,
-                        variation_idx=var_num
-                    )
+            base_env = ScienceWorldEnvBase()
+            # Create SciWorldTask instance
+            task = SciWorldTask(
+                task_id=f"{task_name}-{var_num}",
+                sub_task_name=task_name,
+                variation_idx=var_num
+            )
 
-                    # Initialize SciWorldEnv from eval_agent
-                    sciworld_env = SciWorldEnv(
-                        task=task,
-                        env=base_env,
-                        gold_path=gold_path,
-                        max_env_steps=config.max_env_steps,
-                        api_key=config.api_key if config.use_openai_embedding else None
-                    )
+            # Initialize SciWorldEnv from eval_agent
+            sciworld_env = SciWorldEnv(
+                task=task,
+                env=base_env,
+                gold_path=gold_path,
+                max_env_steps=config.max_env_steps,
+                api_key=config.api_key if config.use_openai_embedding else None
+            )
                     
-                    sciworld_env.reset()
-                    break
-                except Exception as e:
-                    if not isinstance(e, KeyboardInterrupt):
-                        logger.info(f"Error: {e}")
-                        continue
-                    else:
-                        raise e
+            sciworld_env.reset()
             
             # Add to list of environments
             envs.append(sciworld_env)
