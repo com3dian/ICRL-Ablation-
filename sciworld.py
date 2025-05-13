@@ -44,6 +44,7 @@ class Methods(Enum):
     ICRL = "icrl"
     RANDOM_SAMPLING = "random_sampling"
     REFLEXION = "reflexion"
+    REACT = "react"
 
 @dataclass
 class SciWorldConfig:
@@ -59,7 +60,9 @@ class SciWorldConfig:
     zero_out_rewards: bool = False
     no_rewards: bool = False
     explore_only: bool = False
+    exploit_only: bool = False
     explore_and_exploit: bool = False
+    neutral_prompt: bool = False
     # Shorthands
     # no_rewards: bool = False # shorthand
     # is_openrouter: bool = False # shorthand
@@ -253,6 +256,11 @@ def parse_args():
         config.max_attempts_in_context = 0
     elif config.icrl_mode == Methods.REFLEXION:
         config.num_initial_attempts = 0
+    elif config.icrl_mode == Methods.REACT:
+        config.num_initial_attempts = 0
+        config.max_attempts_in_context = 0
+        config.react = True
+
     postfix = datetime.now().strftime("%Y%m%d_%H%M")
     if config.postfix:
         postfix = postfix + "_" + config.postfix
@@ -299,24 +307,33 @@ def load_envs(num_envs, config, gold_path=False, micro_repeat=1):
         var_num = 0
         
         for _ in range(micro_repeat):
-            base_env = ScienceWorldEnvBase()
-            # Create SciWorldTask instance
-            task = SciWorldTask(
-                task_id=f"{task_name}-{var_num}",
-                sub_task_name=task_name,
-                variation_idx=var_num
-            )
+            while True:
+                try:
+                    base_env = ScienceWorldEnvBase()
+                    # Create SciWorldTask instance
+                    task = SciWorldTask(
+                        task_id=f"{task_name}-{var_num}",
+                        sub_task_name=task_name,
+                        variation_idx=var_num
+                    )
 
-            # Initialize SciWorldEnv from eval_agent
-            sciworld_env = SciWorldEnv(
-                task=task,
-                env=base_env,
-                gold_path=gold_path,
-                max_env_steps=config.max_env_steps,
-                api_key=config.api_key if config.use_openai_embedding else None
-            )
-            
-            sciworld_env.reset()
+                    # Initialize SciWorldEnv from eval_agent
+                    sciworld_env = SciWorldEnv(
+                        task=task,
+                        env=base_env,
+                        gold_path=gold_path,
+                        max_env_steps=config.max_env_steps,
+                        api_key=config.api_key if config.use_openai_embedding else None
+                    )
+                    
+                    sciworld_env.reset()
+                    break
+                except Exception as e:
+                    if not isinstance(e, KeyboardInterrupt):
+                        logger.info(f"Error: {e}")
+                        continue
+                    else:
+                        raise e
             
             # Add to list of environments
             envs.append(sciworld_env)
@@ -735,6 +752,10 @@ async def run_evaluation(config: SciWorldConfig, data: dict = None):
                             instruction = config.exploration_instruction
                         elif config.explore_and_exploit:
                             instruction = config.explore_and_exploit_instruction
+                        elif config.neutral_prompt:
+                            instruction = config.neutral_round_instruction
+                        elif config.exploit_only:
+                            instruction = config.exploitation_instruction
                         else:
                             instruction = config.exploration_instruction if round_idx%2==0 else config.exploitation_instruction
                     elif config.icrl_mode == Methods.RANDOM_SAMPLING:
@@ -748,11 +769,16 @@ async def run_evaluation(config: SciWorldConfig, data: dict = None):
                     current_attempt.raw_prompts.append(copy.deepcopy(messages))
                     current_attempt.attempt_prompts.append({"role": "user", "content": env.env.taskdescription()})
                     
+                    if config.react:
+                        messages.append({"role": "assistant", "content": "Think: "})
+                    
                     first_round = False
                     return messages, False
                 else:
                     assert messages[-1]["role"] == "assistant", "It's assistant's turn"
-                    
+                    if config.react:
+                        messages = merge_same_role_messages(messages)
+
                     # Record raw prompt and attempt prompt
                     current_attempt.attempt_prompts.append({"role": "assistant", "content": messages[-1]["content"]})
                     
@@ -771,6 +797,8 @@ async def run_evaluation(config: SciWorldConfig, data: dict = None):
                         augmented_prompt = prompt + "\n" + config.available_actions + "\nAvailable objects: " + ', '.join(env.env.get_possible_objects())
                         messages.append({"role": "user", "content": augmented_prompt})
                         current_attempt.raw_prompts.append(copy.deepcopy(messages))
+                        if config.react:
+                            messages.append({"role": "assistant", "content": "Think: "})
                         return messages, False
                     else:
                         attempt_prompt = prompt
@@ -922,22 +950,27 @@ def convert_keys_to_int(obj):
         return [convert_keys_to_int(item) for item in obj]
     return obj
 
-def find_sciworld_file(folder_path):
+def find_sciworld_file(folder_path, raw_prompts=False):
     """Find the sciworld data file in a given folder."""
-    pattern = os.path.join(folder_path, "sciworld_data_round_*_final.json")
+    if raw_prompts:
+        pattern = os.path.join(folder_path, "raw_prompts_sciworld_data_round_*_final.json")
+    else:
+        pattern = os.path.join(folder_path, "sciworld_data_round_*_final.json")
     files = glob.glob(pattern)
     if not files:
         raise FileNotFoundError(f"No sciworld data file found in {folder_path}")
-    return files[0]
+    return files[0]  # Return the first matching file
+
 
 def load_data(folder_path):
     data = json.load(open(find_sciworld_file(folder_path)), object_hook=convert_keys_to_int)
+    raw_data = json.load(open(find_sciworld_file(folder_path, raw_prompts=True)), object_hook=convert_keys_to_int)
     for env_id, env_data in data.items():
         # convert bootstrap data to Attempt objects
         bootstrap_attempts = {}
         for attempt_id, attempt_data in env_data.get('bootstrap_attempts', {}).items():
             attempt = Attempt(
-                raw_prompts=attempt_data.get('raw_prompts', []),
+                raw_prompts=raw_data[env_id]['round_attempts'][attempt_id],
                 rewards=attempt_data.get('rewards', []),
                 attempt_prompts=attempt_data.get('attempt_prompts', []),
                 extra_fields=attempt_data.get('extra_fields', {}),
@@ -952,7 +985,7 @@ def load_data(folder_path):
             round_attempts[round_id] = {}
             for attempt_id, attempt_data in round_data.items():
                 attempt = Attempt(
-                    raw_prompts=attempt_data.get('raw_prompts', []),
+                    raw_prompts=raw_data[env_id]['round_attempts'][round_id][attempt_id],
                     rewards=attempt_data.get('rewards', []),
                     attempt_prompts=attempt_data.get('attempt_prompts', []),
                     extra_fields=attempt_data.get('extra_fields', {}),
