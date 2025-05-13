@@ -51,6 +51,7 @@ class Methods(Enum):
 class SciWorldConfig:
     sw_output_path: str = "ICL/sw/"  # ScienceWorld output path
     postfix: str = ""
+    commit_message: str = os.popen("git log -1 --pretty=%B").read().strip()
     
     # Experiment modes
     icrl_mode: Methods = Methods.ICRL
@@ -69,7 +70,6 @@ class SciWorldConfig:
     selfrefine: bool = False
     cot: bool = False
     # Shorthands
-    # no_rewards: bool = False # shorthand
     # is_openrouter: bool = False # shorthand
 
     # Experiment parameters
@@ -311,8 +311,9 @@ def parse_args():
         config.react = True
     elif config.icrl_mode == Methods.SELFREFINE:
         config.num_initial_attempts = 0
-        config.max_reflections_in_context = 1
+        # config.max_reflections_in_context = 1
         config.selfrefine = True
+        config.no_rewards = True
     elif config.icrl_mode == Methods.COT:
         config.num_initial_attempts = 0
         config.max_attempts_in_context = 0
@@ -518,9 +519,7 @@ class Attempt:
 
     @staticmethod
     def process_reflexion(reflection_string):
-        # remove any tags, beginning or end
         reflection_string = re.sub(r'<[^>]*>', '', reflection_string)
-        # remove any "Action:" and all the text after it(including whitespace)
         reflection_string = re.sub(r'Action:[\s\S]*', '', reflection_string)
         return reflection_string
 
@@ -890,11 +889,11 @@ async def run_evaluation(config: SciWorldConfig, data: dict = None):
                 if turn == 0:
                     messages.append({"role": "user", "content": f"{config.task_prompt_cot}"})
 
-                    if config.selfrefine and round_idx > 0:
-                        # add the last attempt to the messages
-                        messages.append({"role": "user", "content": "<Attempt>"})
-                        messages.extend(data[env_id]['round_attempts'][round_idx-1][0].get_processed_attempt_prompts(config))
-                        messages.append({"role": "assistant", "content": "</Attempt>"})
+                    # if config.selfrefine and round_idx > 0:
+                    #     # add the last attempt to the messages
+                    #     messages.append({"role": "user", "content": "<Attempt>"})
+                    #     messages.extend(data[env_id]['round_attempts'][round_idx-1][0].get_processed_attempt_prompts(config))
+                    #     messages.append({"role": "assistant", "content": "</Attempt>"})
 
                     # add reflections to messages
                     reflection_buffer = []
@@ -974,6 +973,12 @@ async def run_evaluation(config: SciWorldConfig, data: dict = None):
                     
                     # Process the reflection and store it in extra_fields instead of attempt_prompts
                     processed_reflection = Attempt.process_reflexion(messages[-1]["content"])
+                    if config.selfrefine:
+                        attempt_trajectory = "<Attempt>\n"
+                        attempt_trajectory += current_attempt.get_processed_attempt_prompts(config)
+                        attempt_trajectory += "\n</Attempt>"
+                        processed_reflection = attempt_trajectory + "\n" + processed_reflection
+
                     current_attempt.extra_fields['reflections'].append({
                         "role": "assistant", 
                         "content": processed_reflection
@@ -1053,7 +1058,7 @@ def load_data(folder_path):
         bootstrap_attempts = {}
         for attempt_id, attempt_data in env_data.get('bootstrap_attempts', {}).items():
             attempt = Attempt(
-                raw_prompts=raw_data[env_id]['round_attempts'][attempt_id],
+                raw_prompts=raw_data[env_id]['bootstrap_attempts'][attempt_id],
                 rewards=attempt_data.get('rewards', []),
                 attempt_prompts=attempt_data.get('attempt_prompts', []),
                 extra_fields=attempt_data.get('extra_fields', {}),
