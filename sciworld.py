@@ -740,9 +740,11 @@ async def run_evaluation(config: SciWorldConfig, data: dict = None):
     for start_round in range(config.rounds):
         if not start_round in data[0]['round_attempts']:
             break
+    envs = load_envs(config.num_envs, config, gold_path=False)
     for round_idx in range(start_round, config.rounds):
         logger.info(f"Round {round_idx+1}/{config.rounds}...")
-        envs = load_envs(config.num_envs, config, gold_path=False)
+        for env in envs:
+            env.reset()
         
         def wrapper2(i):
             env = envs[i]
@@ -975,7 +977,7 @@ async def run_evaluation(config: SciWorldConfig, data: dict = None):
                     processed_reflection = Attempt.process_reflexion(messages[-1]["content"])
                     if config.selfrefine:
                         attempt_trajectory = "<Attempt>\n"
-                        attempt_trajectory += current_attempt.get_processed_attempt_prompts(config)
+                        attempt_trajectory += current_attempt.get_processed_attempt_prompts(config)[-1]['content']
                         attempt_trajectory += "\n</Attempt>"
                         processed_reflection = attempt_trajectory + "\n" + processed_reflection
 
@@ -1006,6 +1008,7 @@ async def run_evaluation(config: SciWorldConfig, data: dict = None):
                     except Exception as e:
                         if not isinstance(e, KeyboardInterrupt):
                             logger.error(f"Error in {i}, {envs[i].env.taskdescription()}: {e}")
+                            temperature *= 1.2
                             base_env = ScienceWorldEnvBase()
                             sciworld_env = SciWorldEnv(
                                 task=envs[i].task,
