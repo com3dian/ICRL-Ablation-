@@ -26,6 +26,7 @@ import colorama
 import copy
 import dotenv
 import pdb
+import traceback
 dotenv.load_dotenv()
 
 # Set up logging
@@ -69,6 +70,7 @@ class SciWorldConfig:
     react: bool = False
     selfrefine: bool = False
     cot: bool = False
+    high_reward_only: bool = False
     # Shorthands
     # is_openrouter: bool = False # shorthand
 
@@ -248,6 +250,8 @@ After thinking through your approach, write your action **exactly** in the "Acti
 Your location and the environment is reset now. It's your turn.
 
 Before each action, think through your process step by step. Enclose your reasoning within `<thought>...</thought>` tags so that only you can see it.
+
+After thinking, make sure to write your action **exactly** in the "Action: single_action" format. **You can only do one action at a time.**
 """
 
     # no_reward_exploration_instruction: str = "Instruction: Examine all the `<attempt>…</attempt>` examples, each showing a candidate Response. Provide a response that is different from every single one of the previous attempts demonstrated in the context, while making sure it correctly follows the task instruction, and put it in `<answer>**Response** Step1: ... Step2: ... Step3: ... **Answer**: <math operations of the 4 input numbers = 24></answer>` format."
@@ -495,9 +499,15 @@ class Attempt:
             
             
             content = "(Interaction summary)\n"
-            action_idx = 0
+            action_idx = -1
+            if config.high_reward_only:
+                avg_reward = sum(modified_rewards) / len(modified_rewards)
             for i, attempt_prompt in enumerate(attempt_prompts_copy):
                 if attempt_prompt['role'] == "assistant":
+                    action_idx += 1
+                    if config.high_reward_only:
+                        if modified_rewards[action_idx] < avg_reward:
+                            continue
                     action = SciWorldEnv.parse_action(attempt_prompt['content'])
                     action = re.sub(r'\s+', ' ', action)
                     if len(action) > 100:
@@ -512,7 +522,6 @@ class Attempt:
                             content += f" -> {action} -> {attempt_prompts_copy[i+1]['content']} (reward={modified_rewards[action_idx]})\n"
                         else:
                             content += f" -> {action} -> {attempt_prompts_copy[i+1]['content']}\n"
-                    action_idx += 1
             if not config.no_rewards:
                 content += f"\nTotal reward: {sum(modified_rewards)}"
             return [{"role": "user", "content": content}]
@@ -1008,7 +1017,15 @@ async def run_evaluation(config: SciWorldConfig, data: dict = None):
                     except Exception as e:
                         if not isinstance(e, KeyboardInterrupt):
                             logger.error(f"Error in {i}, {envs[i].env.taskdescription()}: {e}")
-                            temperature *= 1.2
+                            logger.error(f"Stacktrace: {traceback.format_exc()}")
+                            if temperature == 2:
+                                attempt = Attempt(
+                                    raw_prompts=[{"role": "user", "content": "placeholder"}],
+                                    attempt_prompts=[{"role": "user", "content": "placeholder"}],
+                                    rewards=[0],
+                                    extra_fields={"reflections": [{"role": "assistant", "content": "placeholder"}]},
+                                )
+                            temperature = min(2, temperature * 1.2)
                             base_env = ScienceWorldEnvBase()
                             sciworld_env = SciWorldEnv(
                                 task=envs[i].task,
