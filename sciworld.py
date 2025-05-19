@@ -26,6 +26,7 @@ import colorama
 import copy
 import dotenv
 import pdb
+import traceback
 dotenv.load_dotenv()
 
 # Set up logging
@@ -44,11 +45,14 @@ class Methods(Enum):
     ICRL = "icrl"
     RANDOM_SAMPLING = "random_sampling"
     REFLEXION = "reflexion"
-
+    REACT = "react"
+    SELFREFINE = "selfrefine"
+    COT = "cot"
 @dataclass
 class SciWorldConfig:
     sw_output_path: str = "ICL/sw/"  # ScienceWorld output path
     postfix: str = ""
+    commit_message: str = os.popen("git log -1 --pretty=%B").read().strip()
     
     # Experiment modes
     icrl_mode: Methods = Methods.ICRL
@@ -59,10 +63,15 @@ class SciWorldConfig:
     zero_out_rewards: bool = False
     no_rewards: bool = False
     explore_only: bool = False
+    exploit_only: bool = False
     explore_and_exploit: bool = False
+    neutral_prompt: bool = False
     max_reflections_in_context: Optional[int] = None
+    react: bool = False
+    selfrefine: bool = False
+    cot: bool = False
+    high_reward_only: bool = False
     # Shorthands
-    # no_rewards: bool = False # shorthand
     # is_openrouter: bool = False # shorthand
 
     # Experiment parameters
@@ -144,6 +153,20 @@ Try to complete the task.
 After thinking, make sure to write your action **exactly** in the "Action: single_action" format. **You can only do one action at a time.**
 """
 
+    cot_instruction: str = """
+Your location and the environment is reset now. It's your turn.
+
+Before taking any action, carefully think through your entire plan for completing the task:
+1. Analyze what objects might be needed and where they might be located
+2. Consider the sequence of actions required to complete the task successfully
+3. Anticipate potential obstacles or challenges you might encounter
+4. Plan how you'll handle each step efficiently
+
+This thoughtful planning will significantly improve your chances of success. After thoroughly thinking through your plan, choose your first action.
+
+Write your action **exactly** in the "Action: single_action" format. **You can only do one action at a time.**
+"""
+
     explore_and_exploit_instruction: str = """
 Your location and the environment is reset now. It's your turn.
 You get multiple attempts to complete the task.
@@ -197,6 +220,38 @@ dunk OBJ into OBJ: dunk a container into a liquid
 inventory: list agent's inventory
 wait: task no action for 10 steps  
 wait1: task no action for a step
+"""
+
+    do_selfrefine_instruction: str = """
+Review your completed attempt for this scientific task. Now, provide detailed feedback on what went wrong:
+1. Identify any specific errors or misunderstandings in your approach
+2. Analyze which actions were ineffective and why they failed
+3. Determine what key steps or objects you missed or used incorrectly
+
+Put your feedback within <feedback>...</feedback> tags.
+
+Then, briefly outline an improved approach that would address these issues for a future attempt. What would you do differently to successfully complete the task?
+"""
+
+    use_selfrefine_instruction: str = """
+Your location and the environment is reset now. It's your turn.
+
+Consider the feedback provided on previous attempts for this scientific task. Apply the insights from this feedback to improve your approach. Pay special attention to:
+1. Correcting the specific errors identified in previous attempts
+2. Using more effective actions in the right sequence
+3. Focusing on key objects and steps that were missed before
+
+Develop a clear plan that addresses the issues highlighted in the feedback and follows the task instructions correctly.
+
+After thinking through your approach, write your action **exactly** in the "Action: single_action" format. You can only do one action at a time.
+"""
+
+    react_instruction: str = """
+Your location and the environment is reset now. It's your turn.
+
+Before each action, think through your process step by step. Enclose your reasoning within `<thought>...</thought>` tags so that only you can see it.
+
+After thinking, make sure to write your action **exactly** in the "Action: single_action" format. **You can only do one action at a time.**
 """
 
     # no_reward_exploration_instruction: str = "Instruction: Examine all the `<attempt>…</attempt>` examples, each showing a candidate Response. Provide a response that is different from every single one of the previous attempts demonstrated in the context, while making sure it correctly follows the task instruction, and put it in `<answer>**Response** Step1: ... Step2: ... Step3: ... **Answer**: <math operations of the 4 input numbers = 24></answer>` format."
@@ -254,6 +309,20 @@ def parse_args():
         config.max_attempts_in_context = 0
     elif config.icrl_mode == Methods.REFLEXION:
         config.num_initial_attempts = 0
+    elif config.icrl_mode == Methods.REACT:
+        config.num_initial_attempts = 0
+        config.max_attempts_in_context = 0
+        config.react = True
+    elif config.icrl_mode == Methods.SELFREFINE:
+        config.num_initial_attempts = 0
+        # config.max_reflections_in_context = 1
+        config.selfrefine = True
+        config.no_rewards = True
+    elif config.icrl_mode == Methods.COT:
+        config.num_initial_attempts = 0
+        config.max_attempts_in_context = 0
+        config.cot = True
+
     postfix = datetime.now().strftime("%Y%m%d_%H%M")
     if config.postfix:
         postfix = postfix + "_" + config.postfix
@@ -316,7 +385,7 @@ def load_envs(num_envs, config, gold_path=False, micro_repeat=1):
                 max_env_steps=config.max_env_steps,
                 api_key=config.api_key if config.use_openai_embedding else None
             )
-            
+                    
             sciworld_env.reset()
             
             # Add to list of environments
@@ -376,7 +445,7 @@ class Attempt:
 
     def get_processed_attempt_prompts(self, config):
         # if self.reflexion:
-            # return self.attempt_prompts
+        #     return self.attempt_prompts
 
         def predicate(reward):
             if config.no_rewards:
@@ -404,37 +473,62 @@ class Attempt:
             Actions and respective rewards: action1 (reward1) -> action2 (reward2) -> ... -> actionN (rewardN)
             sum of rewards: 10, final observation: blah blah blah
             """
+            # content = "(Interaction summary)\n"
+            # action_idx = 0
+            # for attempt_prompt in attempt_prompts_copy:
+            #     if attempt_prompt['role'] == "assistant":
+            #         action = SciWorldEnv.parse_action(attempt_prompt['content'])
+            #         action = re.sub(r'\s+', ' ', action)
+            #         if len(action) > 100:
+            #             action = action[:100] + "..."
+            #         if action_idx == 0:
+            #             if predicate(modified_rewards[0]):
+            #                 content += f"{action} (reward={modified_rewards[0]})"
+            #             else:
+            #                 content += f"{action}"
+            #         else:
+            #             if predicate(modified_rewards[action_idx]):
+            #                 content += f" -> {action} (reward={modified_rewards[action_idx]})"
+            #             else:
+            #                 content += f" -> {action}"
+            #         action_idx += 1
+            # outcome = attempt_prompts_copy[-1]['content'].split("\n")[-1]
+            # content += f"\nTotal reward: {sum(modified_rewards)}, Outcome: {outcome}" \
+            #     if not config.no_rewards else f"\nOutcome: {outcome}"
+            # return [{"role": "user", "content": content}]
+            
+            
             content = "(Interaction summary)\n"
-            # content += attempt_prompts_copy[0]['content']
-            # content += "\nActions and respective rewards:\n" if not config.no_rewards else "Actions:\n"
-            action_idx = 0
-            for attempt_prompt in attempt_prompts_copy:
+            action_idx = -1
+            if config.high_reward_only:
+                avg_reward = sum(modified_rewards) / len(modified_rewards)
+            for i, attempt_prompt in enumerate(attempt_prompts_copy):
                 if attempt_prompt['role'] == "assistant":
+                    action_idx += 1
+                    if config.high_reward_only:
+                        if modified_rewards[action_idx] < avg_reward:
+                            continue
                     action = SciWorldEnv.parse_action(attempt_prompt['content'])
                     action = re.sub(r'\s+', ' ', action)
                     if len(action) > 100:
                         action = action[:100] + "..."
                     if action_idx == 0:
                         if predicate(modified_rewards[0]):
-                            content += f"{action} (reward={modified_rewards[0]})"
+                            content += f"{action} -> {attempt_prompts_copy[i+1]['content']} (reward={modified_rewards[0]})\n"
                         else:
-                            content += f"{action}"
+                            content += f"{action} -> {attempt_prompts_copy[i+1]['content']}\n"
                     else:
                         if predicate(modified_rewards[action_idx]):
-                            content += f" -> {action} (reward={modified_rewards[action_idx]})"
+                            content += f" -> {action} -> {attempt_prompts_copy[i+1]['content']} (reward={modified_rewards[action_idx]})\n"
                         else:
-                            content += f" -> {action}"
-                    action_idx += 1
-            outcome = attempt_prompts_copy[-1]['content'].split("\n")[-1]
-            content += f"\nTotal reward: {sum(modified_rewards)}, Outcome: {outcome}" \
-                if not config.no_rewards else f"\nOutcome: {outcome}"
+                            content += f" -> {action} -> {attempt_prompts_copy[i+1]['content']}\n"
+            if not config.no_rewards:
+                content += f"\nTotal reward: {sum(modified_rewards)}"
             return [{"role": "user", "content": content}]
 
     @staticmethod
     def process_reflexion(reflection_string):
-        # remove any tags, beginning or end
         reflection_string = re.sub(r'<[^>]*>', '', reflection_string)
-        # remove any "Action:" and all the text after it(including whitespace)
         reflection_string = re.sub(r'Action:[\s\S]*', '', reflection_string)
         return reflection_string
 
@@ -458,7 +552,8 @@ def save_data_snapshot(data, config, filename, delete=None):
                 attempt_id: {
                     'rewards': attempt.rewards,
                     'attempt_prompts': attempt.attempt_prompts,
-                    'extra_fields': attempt.extra_fields
+                    'extra_fields': attempt.extra_fields,
+                    'reflexion': attempt.reflexion
                 } for attempt_id, attempt in env_data.get('bootstrap_attempts', {}).items()
             },
             'round_attempts': {
@@ -466,7 +561,8 @@ def save_data_snapshot(data, config, filename, delete=None):
                     attempt_id: {
                         'rewards': attempt.rewards,
                         'attempt_prompts': attempt.attempt_prompts,
-                        'extra_fields': attempt.extra_fields
+                        'extra_fields': attempt.extra_fields,
+                        'reflexion': attempt.reflexion
                     } for attempt_id, attempt in round_data.items()
                 } for round_id, round_data in env_data.get('round_attempts', {}).items()
             }
@@ -653,9 +749,11 @@ async def run_evaluation(config: SciWorldConfig, data: dict = None):
     for start_round in range(config.rounds):
         if not start_round in data[0]['round_attempts']:
             break
+    envs = load_envs(config.num_envs, config, gold_path=False)
     for round_idx in range(start_round, config.rounds):
         logger.info(f"Round {round_idx+1}/{config.rounds}...")
-        envs = load_envs(config.num_envs, config, gold_path=False)
+        for env in envs:
+            env.reset()
         
         def wrapper2(i):
             env = envs[i]
@@ -720,10 +818,18 @@ async def run_evaluation(config: SciWorldConfig, data: dict = None):
                             instruction = config.exploration_instruction
                         elif config.explore_and_exploit:
                             instruction = config.explore_and_exploit_instruction
+                        elif config.neutral_prompt:
+                            instruction = config.neutral_round_instruction
+                        elif config.exploit_only:
+                            instruction = config.exploitation_instruction
                         else:
                             instruction = config.exploration_instruction if round_idx%2==0 else config.exploitation_instruction
                     elif config.icrl_mode == Methods.RANDOM_SAMPLING:
                         instruction = config.neutral_round_instruction
+                    elif config.cot:
+                        instruction = config.cot_instruction
+                    elif config.react:
+                        instruction = config.react_instruction
                     else:
                         raise ValueError(f"Invalid ablation mode: {config.icrl_mode}")
                     messages.append({"role": "user", "content": f"""<Instructions>{instruction}</Instructions>\n{env.env.taskdescription()}"""})
@@ -737,7 +843,7 @@ async def run_evaluation(config: SciWorldConfig, data: dict = None):
                     return messages, False
                 else:
                     assert messages[-1]["role"] == "assistant", "It's assistant's turn"
-                    
+
                     # Record raw prompt and attempt prompt
                     current_attempt.attempt_prompts.append({"role": "assistant", "content": messages[-1]["content"]})
                     
@@ -784,37 +890,45 @@ async def run_evaluation(config: SciWorldConfig, data: dict = None):
             current_attempt = data[env_id]['round_attempts'][round_idx][0]
             current_attempt.extra_fields['reflections'] = []
             
-            round = 0
+            turn = 0
             context_prompt = None   
             messages_copy = None
 
             def build_prompt(messages):
-                nonlocal round
+                nonlocal turn
                 nonlocal context_prompt
                 nonlocal current_attempt
-                nonlocal messages_copy
-                if round == 0:
+                
+                if turn == 0:
                     messages.append({"role": "user", "content": f"{config.task_prompt_cot}"})
 
-                    # add reflections
-                    added_preamble = False
+                    # if config.selfrefine and round_idx > 0:
+                    #     # add the last attempt to the messages
+                    #     messages.append({"role": "user", "content": "<Attempt>"})
+                    #     messages.extend(data[env_id]['round_attempts'][round_idx-1][0].get_processed_attempt_prompts(config))
+                    #     messages.append({"role": "assistant", "content": "</Attempt>"})
+
+                    # add reflections to messages
                     reflection_buffer = []
                     for prev_round_idx in range(round_idx):
                         for _, attempt_obj in data[env_id]['round_attempts'][prev_round_idx].items():
-                            reflection_buffer.extend(attempt_obj.extra_fields['reflections'])
-                    
-                    if config.max_reflections_in_context is not None:
+                            if 'reflections' in attempt_obj.extra_fields:
+                                reflection_buffer.extend(attempt_obj.extra_fields['reflections'])
+                    if config.max_reflections_in_context is not None and reflection_buffer:
                         reflection_buffer = reflection_buffer[-config.max_reflections_in_context:]
-                    
                     if reflection_buffer:
-                        messages.append({"role": "assistant", "content": f"Previous reflections:\n<Reflections>"})
+                        messages.append({"role": "assistant", "content": f"<Reflections>\nPrevious reflections:"})
                         for reflection in reflection_buffer:
                             messages.append({"role": "assistant", "content": "<Reflection>"})
                             messages.append(reflection)
                             messages.append({"role": "assistant", "content": "</Reflection>"})
                         messages.append({"role": "assistant", "content": "</Reflections>"})
-                    
-                    messages.append({"role": "user", "content": f"<Instructions>{config.use_reflexion_instruction}</Instructions>\n{env.env.taskdescription()}"})
+
+                    if not config.selfrefine:
+                        instruction = config.use_reflexion_instruction
+                    else:
+                        instruction = config.use_selfrefine_instruction
+                    messages.append({"role": "user", "content": f"<Instructions>{instruction}</Instructions>\n{env.env.taskdescription()}"})
                     
                     messages = merge_same_role_messages(messages)
                     messages_copy = copy.deepcopy(messages)
@@ -823,14 +937,17 @@ async def run_evaluation(config: SciWorldConfig, data: dict = None):
                     if env_id == 0:
                         print(f"{colorama.Fore.WHITE}{messages[-1]['role']}:\n{messages[-1]['content']}\n{'='*100}")
                     
-                    round += 1
+                    turn += 1
                     return messages, False
-                elif round > 0:
+                elif turn > 0:
                     assert messages[-1]["role"] == "assistant", "It's assistant's turn"
                     current_attempt.attempt_prompts.append({"role": "assistant", "content": messages[-1]["content"]})
                     
                     if env_id == 0:
                         print(f"{colorama.Fore.GREEN}{messages[-1]['role']}:\n{messages[-1]['content']}\n{'='*100}")
+                    
+                    # Add to attempt_prompts for task execution tracking
+                    current_attempt.attempt_prompts.append({"role": "assistant", "content": messages[-1]["content"]})
                     
                     if context_prompt is not None:
                         messages[-2]["content"] = context_prompt
@@ -852,34 +969,41 @@ async def run_evaluation(config: SciWorldConfig, data: dict = None):
                             print(f"{colorama.Fore.WHITE}{messages[-1]['role']}:\n{messages[-1]['content']}\n{'='*100}")
                         return messages, False
                     else:
-                        messages.append({"role": "user", "content": prompt})
-                        current_attempt.attempt_prompts.append({"role": "user", "content": prompt})
-                        current_attempt.raw_prompts.append(copy.deepcopy(messages))
+                        attempt_prompt = prompt
+                        current_attempt.attempt_prompts.append({"role": "user", "content": attempt_prompt})
+                        if not config.selfrefine:
+                            prompt_reflexion = f"{prompt}\n<Instructions>{config.do_reflexion_instruction}</Instructions>"
+                        else:
+                            prompt_reflexion = f"{prompt}\n<Instructions>{config.do_selfrefine_instruction}</Instructions>"
 
-                        messages = messages_copy
-                        messages.append({"role": "user", "content": "<Attempt>"})
-                        messages.extend(current_attempt.get_processed_attempt_prompts(config))
-                        messages.append({"role": "user", "content": "</Attempt>"})
-                        prompt = f"<Instructions>{config.do_reflexion_instruction}</Instructions>"
-                        messages.append({"role": "user", "content": prompt})
-                        messages = merge_same_role_messages(messages)
-                        
-                        round = -1
+                        messages.append({"role": "user", "content": prompt_reflexion})
+                        current_attempt.raw_prompts.append(copy.deepcopy(messages))
+                        turn = -1
                         if env_id == 0:
                             print(f"{colorama.Fore.WHITE}{messages[-1]['role']}:\n{messages[-1]['content']}\n{'='*100}")
                         return messages, False
-                elif round == -1:
+                elif turn == -1:
                     assert messages[-1]["role"] == "assistant", "It's assistant's turn"
 
                     current_attempt.raw_prompts.append(copy.deepcopy(messages))
-                    # current_attempt.attempt_prompts.append(messages[-1])
-                    messages[-1]['content'] = Attempt.process_reflexion(messages[-1]['content'])
-                    current_attempt.extra_fields['reflections'].append(messages[-1])
+                    
+                    # Process the reflection and store it in extra_fields instead of attempt_prompts
+                    processed_reflection = Attempt.process_reflexion(messages[-1]["content"])
+                    if config.selfrefine:
+                        attempt_trajectory = "<Attempt>\n"
+                        attempt_trajectory += current_attempt.get_processed_attempt_prompts(config)[-1]['content']
+                        attempt_trajectory += "\n</Attempt>"
+                        processed_reflection = attempt_trajectory + "\n" + processed_reflection
+
+                    current_attempt.extra_fields['reflections'].append({
+                        "role": "assistant", 
+                        "content": processed_reflection
+                    })
+                    
                     if env_id == 0:
                         print(f"{colorama.Fore.GREEN}{messages[-1]['role']}:\n{messages[-1]['content']}\n{'='*100}")
                     return None, True
                 
-                    
             return build_prompt
                 
         # Process environments in parallel
@@ -887,7 +1011,7 @@ async def run_evaluation(config: SciWorldConfig, data: dict = None):
             async def process_env_idx(i):
                 assert config.exploration_temperature == config.exploitation_temperature == 1.0 or config.icrl_mode == Methods.ICRL, "Exploration and exploitation temp only supported for ICRL"
                 temperature = config.exploration_temperature if round_idx % 2 == 0 else config.exploitation_temperature
-                if config.icrl_mode == Methods.REFLEXION:
+                if config.icrl_mode == Methods.REFLEXION or config.selfrefine:
                     wrapper = wrapper_reflexion
                 else:
                     wrapper = wrapper2
@@ -898,6 +1022,15 @@ async def run_evaluation(config: SciWorldConfig, data: dict = None):
                     except Exception as e:
                         if not isinstance(e, KeyboardInterrupt):
                             logger.error(f"Error in {i}, {envs[i].env.taskdescription()}: {e}")
+                            logger.error(f"Stacktrace: {traceback.format_exc()}")
+                            if temperature == 2:
+                                attempt = Attempt(
+                                    raw_prompts=[{"role": "user", "content": "placeholder"}],
+                                    attempt_prompts=[{"role": "user", "content": "placeholder"}],
+                                    rewards=[0],
+                                    extra_fields={"reflections": [{"role": "assistant", "content": "placeholder"}]},
+                                )
+                            temperature = min(2, temperature * 1.2)
                             base_env = ScienceWorldEnvBase()
                             sciworld_env = SciWorldEnv(
                                 task=envs[i].task,
@@ -930,25 +1063,31 @@ def convert_keys_to_int(obj):
         return [convert_keys_to_int(item) for item in obj]
     return obj
 
-def find_sciworld_file(folder_path):
+def find_sciworld_file(folder_path, raw_prompts=False):
     """Find the sciworld data file in a given folder."""
-    pattern = os.path.join(folder_path, "sciworld_data_round_*_final.json")
+    if raw_prompts:
+        pattern = os.path.join(folder_path, "raw_prompts_sciworld_data_round_*_final.json")
+    else:
+        pattern = os.path.join(folder_path, "sciworld_data_round_*_final.json")
     files = glob.glob(pattern)
     if not files:
         raise FileNotFoundError(f"No sciworld data file found in {folder_path}")
-    return files[0]
+    return files[0]  # Return the first matching file
+
 
 def load_data(folder_path):
     data = json.load(open(find_sciworld_file(folder_path)), object_hook=convert_keys_to_int)
+    raw_data = json.load(open(find_sciworld_file(folder_path, raw_prompts=True)), object_hook=convert_keys_to_int)
     for env_id, env_data in data.items():
         # convert bootstrap data to Attempt objects
         bootstrap_attempts = {}
         for attempt_id, attempt_data in env_data.get('bootstrap_attempts', {}).items():
             attempt = Attempt(
-                raw_prompts=attempt_data.get('raw_prompts', []),
+                raw_prompts=raw_data[env_id]['bootstrap_attempts'][attempt_id],
                 rewards=attempt_data.get('rewards', []),
                 attempt_prompts=attempt_data.get('attempt_prompts', []),
-                extra_fields=attempt_data.get('extra_fields', {})
+                extra_fields=attempt_data.get('extra_fields', {}),
+                reflexion=attempt_data.get('reflexion', False)
             )
             bootstrap_attempts[attempt_id] = attempt
         env_data['bootstrap_attempts'] = bootstrap_attempts
@@ -959,10 +1098,11 @@ def load_data(folder_path):
             round_attempts[round_id] = {}
             for attempt_id, attempt_data in round_data.items():
                 attempt = Attempt(
-                    raw_prompts=attempt_data.get('raw_prompts', []),
+                    raw_prompts=raw_data[env_id]['round_attempts'][round_id][attempt_id],
                     rewards=attempt_data.get('rewards', []),
                     attempt_prompts=attempt_data.get('attempt_prompts', []),
-                    extra_fields=attempt_data.get('extra_fields', {})
+                    extra_fields=attempt_data.get('extra_fields', {}),
+                    reflexion=attempt_data.get('reflexion', False)
                 )
                 round_attempts[round_id][attempt_id] = attempt
         env_data['round_attempts'] = round_attempts
