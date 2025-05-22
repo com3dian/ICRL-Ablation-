@@ -6,14 +6,12 @@ from scienceworld import ScienceWorldEnv
 from openai import OpenAI
 from ..envs import BaseEnv
 from ..tasks import SciWorldTask
-# from eval_agent.prompt import prompt_with_icl
 from ..utils.datatypes import State
 from ..utils.clin_utils import get_best_matched_action_using_sent_transformer
 from sentence_transformers import SentenceTransformer
 logger = logging.getLogger("agent_frame")
 
 task_all = []
-# randomly selected intents for data generation stage 1
 import random
 import pdb
 
@@ -75,7 +73,6 @@ class SciWorldEnv(BaseEnv):
             self.max_steps = max_steps_dict[self.task.sub_task_name]
         else:
             self.max_steps = max_env_steps
-        # self.env.envStepLimit = self.max_steps # we do it here instead
         self.gold_path = gold_path
         self.state = State()
         if kwargs.get("api_key", None):
@@ -105,7 +102,7 @@ class SciWorldEnv(BaseEnv):
         llm_output = self.parse_action(llm_output)
 
         valid_actions_list = getattr(self.state, 'valid_actions_list', self.env.get_valid_action_object_combinations())
-        valid_actions_list = [x for x in valid_actions_list if 'reset' not in x] # remove reset from valid actions
+        valid_actions_list = [x for x in valid_actions_list if 'reset' not in x] 
 
         if "focus" in llm_output.lower():
             valid_actions_list = [x for x in valid_actions_list if 'focus' in x]
@@ -123,19 +120,12 @@ class SciWorldEnv(BaseEnv):
             valid_actions_list = [str(x) for x in range(len(self.state.history[-1]['content'].split('\n')[1:]))]
 
         if len(valid_actions_list) > 0:
-            # Time how long it takes to map generated next_action to one of the valid_actions?
-            # start = time.time()
             action, topN = get_best_matched_action_using_sent_transformer(
                 allowed_actions=valid_actions_list,
                 query=llm_output,
                 model=self.sent_transformer_model,
                 device="cpu"
             )
-            # end = time.time()
-            # sentenceTransformerRuntimes.append(round(end - start, 2))
-
-            # print("Sentence transformer runtimes: " + str(sentenceTransformerRuntimes))
-
             best_match_score = topN[0][1]
 
         if not (best_match_score > 0.8 or \
@@ -165,14 +155,12 @@ class SciWorldEnv(BaseEnv):
         if action is None:
             pdb.set_trace()
         
-        # observation, _, done, info = self.env.step(action)
         reward = info['reward']
         self.state.valid_actions_list = info['valid']
         observation = f"Observation: {observation}"
         self.state.reward = reward
         self.state.steps += 1
         self.state.finished = done
-        # self.state.success = reward >= 0
         observation = self._check_max_steps(observation)
         self.state.history.append({
             "role": "user",

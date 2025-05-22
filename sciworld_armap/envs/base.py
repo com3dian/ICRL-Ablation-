@@ -3,44 +3,6 @@ from abc import ABC, abstractmethod
 from typing import Tuple
 
 from ..utils.datatypes import State
-instr = """You are a helpful assistant to do some scientific experiment in an environment.
-In the environment, there are several rooms: kitchen, foundry, workshop, bathroom, outside, living room, bedroom, greenhouse, art studio, hallway
-You should explore the environment and find the items you need to complete the experiment.
-You can teleport to any room in one step.
-All containers in the environment have already been opened, you can directly get items from the containers.
-
-The available actions are:
-open OBJ: open a container
-close OBJ: close a container
-activate OBJ: activate a device
-deactivate OBJ: deactivate a device
-connect OBJ to OBJ: connect electrical components
-disconnect OBJ: disconnect electrical components
-use OBJ [on OBJ]: use a device/item
-look around: describe the current room
-examine OBJ: describe an object in detail
-look at OBJ: describe a container's contents
-read OBJ: read a note or book
-move OBJ to OBJ: move an object to a container
-pick up OBJ: move an object to the inventory
-pour OBJ into OBJ: pour a liquid into a container
-mix OBJ: chemically mix a container
-teleport to LOC: teleport to a specific room
-focus on OBJ: signal intent on a task object
-wait: task no action for 10 steps
-wait1: task no action for a step
-
-You will be given one example and one task below. The example is to showcase how you should do when you are given the task.
-
-In this example, there are several key elements. 
-First is the task you need to complete. You need to break this task down into several steps, each corresponding to a thought, action, and observation. 
-The thought is your reasoning for this step, and the action is the move you make based on this reasoning. 
-The action must be selected from the aforementioned available actions. 
-You need to generate the thought and action without any other words, while the observation is based on the environment you see after performing your action. 
-You do not need to generate the observation; it will be provided to you after you generate the thought and action.
-
-Here is the example:
-"""
 
 raw_icl = [
     [
@@ -108,19 +70,6 @@ raw_icl = [
 ]
 
 class BaseEnv(ABC):
-    def __init__(
-        self,
-        **kwargs,
-    ):
-        # with open(instruction_path) as f:
-        #     self.instruction = f.read()
-        # self.instruction = instr
-        # self.raw_icl = json.load(open(icl_path))
-        # self.raw_icl = raw_icl
-        # self.icl_format = icl_format
-        ...
-
-
     @abstractmethod
     def step(self, llm_output: str) -> Tuple[str, State]:
         pass
