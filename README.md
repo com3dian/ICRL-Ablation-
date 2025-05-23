@@ -13,18 +13,48 @@ uv pip install -r requirements.txt
 ## Game of 24
 Configure the OpenAI API key and specify which ICRL method or ablation to run in the file, then run:
 ```
-python llm_game_24_api.py
+python llm_game24_api.py
 ```
 
 Run reflexion baseline:
 ```
-python llm_game_24_reflexion.py
+python llm_game24_api_reflexion.py
 ```
+Run self-refine baseline:
+```
+python llm_game24_api_self-refine.py
+```
+Run Best-of-N baseline:
+```
+python llm_game24_api_rejection.py
+```
+Run long CoT baseline:
+```
+python llm_game24_api_CoT.py
+```
+
 
 ## Creative Writing
 Configure the OpenAI API key and specify which ICRL method or ablation to run in the file, then run:
 ```
-python llm_game_24_api.py
+python llm_creative_writing_api.py
+```
+
+Run reflexion baseline:
+```
+python llm_creative_writing_api_reflexion.py
+```
+Run self-refine baseline:
+```
+python llm_creative_writing_api_self-refine.py
+```
+Run Best-of-N baseline:
+```
+python llm_creative_writing_api_rejection.py
+```
+Run long CoT baseline:
+```
+python llm_creative_writing_api_CoT.py
 ```
 
 ## ScienceWorld
