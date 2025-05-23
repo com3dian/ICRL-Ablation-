@@ -10,6 +10,19 @@ uv venv --python 3.11
 source .venv/bin/activate
 uv pip install -r requirements.txt
 ```
+## Game of 24
+Configure the OpenAI API key and specify which ICRL method or ablation to run in the file, then run:
+```python llm_game_24_api.py
+```
+
+Run other baseline methods
+```python llm_game_24_reflexion.py
+```
+
+## Creative Writing
+Configure the OpenAI API key and specify which ICRL method or ablation to run in the file, then run:
+```python llm_game_24_api.py
+```
 
 ## ScienceWorld
 
