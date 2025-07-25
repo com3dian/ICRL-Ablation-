@@ -23,14 +23,14 @@ num_char = 200
 
 
 rejection_sampling = 0
-ICRL = 0
+ICRL = 1
 exploration_only = 0
 exploitation_only = 0
 no_reward_exploration = 0
 exploration_or_exploitation = 0
 no_reward = 0
 zero_reward = 0
-exploration_and_exploitation = 1
+
 
 load_samples = 0
 
@@ -210,8 +210,6 @@ def evaluate_checkpoint(
                         prompt += no_reward_exploration_instruction
                     if exploration_or_exploitation: 
                         prompt += explore_or_exploit_instruction
-                    if exploration_and_exploitation:
-                        prompt += explore_and_exploit_instruction
 
 
                 prompt += " Only make one attempt, and put your answer in `<answer>**Response** Step1: ... (left: ...) Step2: ... (left: ...) Step3: ... (left: ...) **Answer**: <math operations of the 4 input numbers, even if it does not equal 24></answer>` format. Whether the Answer is correct or incorrect, do not try again. \n"
