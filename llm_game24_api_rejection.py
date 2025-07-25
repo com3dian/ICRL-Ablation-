@@ -24,35 +24,11 @@ num_weak_demo = 3000
 rejection_sampling = True
 api_eval = True
 
-eval_prompt = "Use numbers and basic arithmetic operations (+ - * /) to obtain 24. Given an input and an answer, give a judgement (sure/impossible) if the answer is correct, i.e. it uses each input exactly once and no other numbers, and reach 24."
-eval_prompt = "Evaluate if given numbers can reach 24 (sure/likely/impossible)"
-# eval_prompt = f"Evaluate if the given solution for the 24 game is correct for this input: {}. Solution: {}. Return -10 if correct. If incorrect, if the solution is invalid such as using the same number twice or using numbers other than the 4 numbers in the input, return 10; if the solution is valid, but the answer is not 24, count the number of edits of the operations required to make it into a correct solution of 24. The higher the number of edits, the further away the solution is from the correct solution. Return the number of edits. Put your response in the following format: Answer: <integer number of edits>."
 
-client = OpenAI(api_key="sk-C8z62BDhmo4EW1bqOn2TTmdFR29ocUeZXLExkdmGS1T3BlbkFJQcA3zOug-aNTm98KC0Wjsv549b3OgxEGn9TKJknXMA")
+client = OpenAI(api_key="Your_API_Key")
 
 
-exploration_instruction = "Instruction: Examine all the `<attempt>…</attempt>` examples, each showing a candidate Response and its Reward. Provide a response that is completely different from any previous attempts demonstrated in the context, and wrap it in `<answer>…</answer>`."
-
-exploitation_instruction = "Instruction: You will be given multiple <attempt>…</attempt> entries. Each entry contains: •A candidate Response •Its Format Reward and Accuracy Reward.  Your task: 1. Parse all <attempt> blocks and identify the attempts with the top reward scores. 2. Among those top‐scoring attempts, select the ones that are most distinct from each other in style or angle. 3. Create a single new mega response that fuses the strongest elements from each distinct, high‐scoring attempt both in Format Reward and Accuracy Reward. 4. Return only this new, combined mega response wrapped in an <answer>…</answer> tag."
-
-exploration_instruction = ""
-exploitation_instruction = ""
-
-exploration_instruction = "Instruction: Examine all the `<attempt>…</attempt>` examples, each showing a candidate Response and its Reward. Provide a response that is completely different from any previous attempts demonstrated in the context, and put it in `**Response** Steps: ... **Answer**: ...` format."
-exploitation_instruction = "Instruction: You will be given multiple <attempt>…</attempt> entries. Each entry contains: •A candidate Response •Its Format Reward and Accuracy Reward  Your task: 1. Parse all <attempt> blocks and identify the attempts with the top reward scores. 2. Among those top‐scoring attempts, select the ones that are most distinct from each other in style or angle. 3. Create a single new mega response that fuses the strongest elements from each distinct, high‐scoring attempt both in Format Reward and Accuracy Reward. 4. Return only this new, combined mega response, and put it in `**Response** Steps: ... **Answer**: <math operations of the 4 input numbers> format."
-
-
-exploration_instruction = "Instruction: Examine all the `<attempt>…</attempt>` examples, each showing a candidate Response and its Reward. Provide a response that is different from every single one of the previous attempts demonstrated in the context, while making sure it correctly follows the task instruction, and put it in `<answer>**Response** Step1: ... Step2: ... Step3: ... **Answer**: <math operations of the 4 input numbers = 24></answer>` format."
-exploitation_instruction = "Instruction: You will be given multiple <attempt>…</attempt> entries. Each entry contains: •A candidate Response •Its Format Reward and Accuracy Reward  Your task: make the best educated guess based on the high reward attempts to produce a more correctresponse that can achieve a higher reward, while making sure it correctly follows the task instruction, and put it in `<answer>**Response** Step1: ... Step2: ... Step3: ... **Answer**: <math operations of the 4 input numbers = 24></answer>` format."
-
-# use the least common high reward attempt as your starting point to make small edits that can achieve a higher reward, while making sure it correctly follows the task instruction, and put it in `**Response** Steps: ... **Answer**: ...` format.
-
-
-# import sys
-# import os
-
-# Add the directory to Python's path
-sys.path.append('/sfs/weka/scratch/ks8vf/ICL/tree-of-thought-llm/src')
+sys.path.append('tree-of-thought-llm/src')
 
 from sympy import sympify
 from tot.tasks import get_task
@@ -66,120 +42,18 @@ from tot.prompts.game24 import (
     value_last_step_prompt
 )
 
-def main():
-    # 1. Initialize the Game24 task; this will load all of the "24" puzzles
-    task = get_task("game24")
-    print(f"Loaded {len(task)} puzzles.\n")
-
-    # 2. Pick one puzzle (here, the first)
-    idx = 0
-    puzzle = task.get_input(idx)  # e.g. "4 4 6 8"
-    print(f"Puzzle #{idx}: {puzzle}\n")
-
-    # 3. Fill each of the built-in templates
-    std = standard_prompt.format(input=puzzle)
-    cot = cot_prompt.format(input=puzzle)
-    propose = propose_prompt.format(input=puzzle)
-    val = value_prompt.format(input=puzzle)
-    # for the last-step judge we need both input and a sample answer:
-    sample_answer = "(4 + 8) * (6 - 4) = 24"
-    val_last = value_last_step_prompt.format(input=puzzle, answer=sample_answer)
-
-
-
-    # 4. Print them out
-    print("=== Standard Prompt ===\n")
-    print(std)
-    print("\n=== Chain-of-Thought Prompt ===\n")
-    print(cot)
-    print("\n=== Propose Prompt ===\n")
-    print(propose)
-    print("\n=== Value Prompt ===\n")
-    print(val)
-    print("\n=== Value-Last-Step Prompt ===\n")
-    print(val_last)
-    # read the 24.csv data the same way as tot. 
-    batch_prompts = [cot+"\nSteps:"]
-
-    model_name = "gpt-4.1-mini"
-    # model_name = "gpt-4o-mini"
-    # model_name = "gpt-4.1-nano"
-    with ThreadPoolExecutor(max_workers=12) as pool:
-        api_outputs = list(pool.map(
-            lambda p: client.responses.create(model=model_name, input=p).output_text,
-            batch_prompts
-        ))
-    print("api_outputs", api_outputs)
-    for generated_text in api_outputs:
-        m = re.search(r'^(?:.*Answer:)\s*(.*)$', generated_text, re.DOTALL)
-        if m:
-            model_answer = m.groups()[-1].strip()
-        print(model_answer)
-
-    # model_answer = "((4 / 1) * 6) * 1 = 24"
-    lhs = sympify(model_answer.split("=")[0])
-    expr = sympify(model_answer.split("=")[0], evaluate=False)
-    operand = [int(i) for i in expr.args]
-    true_operand = [int(i) for i in puzzle.split(" ")]
-
-    operand.sort()
-    true_operand.sort()
-
-    print("operand", operand)
-    print("true_operand", true_operand)
-
-    # sort the operand and true_operand
-
-    print("sorted_operand", operand)
-    print("sorted_true_operand", true_operand)
-    print("check", operand == true_operand)
-
-    # entire_expression = sympify(model_answer)
-    print("lhs", lhs)
-    print(lhs == 24)
-    # print("entire_expression", entire_expression)
-
 
 
 def evaluate_checkpoint(
-    # checkpoint_path='meta-llama/Meta-Llama-3-8B-Instruct',
-    # base_model_id="meta-llama/Meta-Llama-3-8B-Instruct",
-    checkpoint_path="google/gemma-7b-it",
-    base_model_id="google/gemma-7b-it",
-    # judge_model_id="google/gemma-3-12b-it",
-    # judge_model_id="google/gemma-7b-it",
-    judge_model_id="meta-llama/Meta-Llama-3-8B-Instruct",
-    dataset_name='tatsu-lab/alpaca',
-    split="test",
+    checkpoint_path="game_of_24",
+    base_model_id="GPT-4.1",
     max_eval_samples=45,
-    n=200,
+    n=51,
     max_new_tokens=1000
 ):
     num_samples = 48
     task = get_task("game24")
 
-
-
-    """
-    Evaluate the model using batch inference. For each round, we send all questions
-    together to vLLM, then update each prompt with the generated response as a weak demo.
-    The process repeats for n rounds.
-    """
-    # Load dataset.
-    if dataset_name == "openai/gsm8k":
-        dataset = load_dataset(dataset_name, 'main', split=split)
-    elif dataset_name == "tatsu-lab/alpaca":
-        dataset = load_dataset(dataset_name, split='train')
-
-    # Optionally reduce dataset size.
-    if max_eval_samples < len(dataset):
-        dataset = dataset.select(range(25, max_eval_samples))
-    
-    # Load one_shot prompt.
-    # with open('length_prompt_attempt.txt', 'r') as f:
-    #     one_shot_prompt = f.read()
-    # with open('humor_prompt_attempt_task_two_reward.txt', 'r') as f:
-    #     one_shot_prompt = f.read()
 
     with open('game24_rejection.txt', 'r') as f:
         one_shot_prompt = f.read()
@@ -187,28 +61,14 @@ def evaluate_checkpoint(
     # Load tokenizer.
     tokenizer = AutoTokenizer.from_pretrained(base_model_id)
     
-    # Initialize the vLLM instance.
-    # os.environ["CUDA_VISIBLE_DEVICES"] = "1"
-    # judge_llm = LLM(model=judge_model_id)
-    # os.environ["CUDA_VISIBLE_DEVICES"] = "0"
-    # llm = LLM(model=base_model_id)
-    # judge_llm = llm
+
     
     sampling_params = SamplingParams(temperature=0.6, top_p=0.95, max_tokens=max_new_tokens)
     
     # Prepare a list for all samples that meet the criteria.
     # Each entry stores the question, a history of weak demos, and outputs per round.
     samples = []
-    # for sample in dataset:
-    #     question = sample.get('instruction', "")
-    #     question_input = sample.get('input', "")
-    #     if len(question_input) != 0:
-    #         continue
-    #     samples.append({
-    #         "question": question,
-    #         "weak_demos": [],  # will hold dictionaries with keys: prompt, answer, reward
-    #         "output": []       # will record output details per round
-    #     })
+
     for idx in range(num_samples):
         question = task.get_input(900+idx)
         samples.append({
@@ -219,17 +79,12 @@ def evaluate_checkpoint(
     
     num_samples = len(samples)
     print(f"Processing {num_samples} samples in {n} rounds...")
+
     
-    task_prompt = "You are a comedy writer competing for the highest laughs. Your goal is to write a short passage that would score a perfect 10 on the humor scale of a seasoned comedy critic. A score of 10 means the critic laughed out loud and found the content wildly entertaining, creative, and clever. You are allowed numerous attempts, each attempt are followed by a reward for your response, and will be placed in the context. Learn from these experience of attempts and provide a response that can achieve a higher reward from this comedy critic. \n"
-    
-    task_prompt = "Write a short humorous passage for the following prompt that matches with the following reward."
-    task_prompt0 = "Write a short humorous passage for the following prompt."
-    task_prompt = "Write a short passage for the following prompt that is as humorous as possible."
-    
-    task_prompt_cot = "Use numbers and basic arithmetic operations (+ - * /) to obtain 24. Each step, you are only allowed to choose two of the remaining numbers to obtain a new number."
+
 
     task_prompt = "Use all 4 numbers provided in the Input without repetition and basic arithmetic operations (+ - * /) to obtain 24. Only three steps are required and allowed."  
-    # For the first step, you can only use numbers from the input. For the second and third steps, you can use the numbers from what is left after the previous step."
+
     task_prompt_cot = task_prompt
     # Run n rounds.
     for round_idx in range(n):
@@ -273,32 +128,19 @@ def evaluate_checkpoint(
                         prompt += exploitation_instruction
 
                     prompt += "</instructions>\n"
-                # else:
-                    # prompt += f"**Task**: {task_prompt_cot}"
-                # prompt += f"**Prompt**: Input: {sample['question']}\nSteps:"
-                # prompt += " Strictly following the Response format as demonstrated in the examples."
-                # prompt += "<attempt>\n"
-                # prompt += f"**Task**: {task_prompt_cot}"
+
                 prompt += "<instructions>\n"
                 prompt += "Only make one attempt, and put your answer in `<answer>**Response** Step1: ... (left: ...) Step2: ... (left: ...) Step3: ... (left: ...) **Answer**: <math operations of the 4 input numbers.></answer>` format. Whether the Answer is correct or incorrect, do not try again. \n"
                 prompt += "</instructions>\n"
                 prompt += f"**Input**: {sample['question']}\n"
-                # prompt += f"**Format Reward**: 0.00\n"
-                # prompt += f"**Accuracy Reward**: 0.00\n"
+
                 
-            # Append the new attempt with the current question.
-            # prompt += "<attempt>\n"
-            # prompt += f"**Task**: {task_prompt}"
-            # prompt += f"**Prompt**: {sample['question']}\n"
-            # prompt += "**Reward**: 10.00\n"
+
             batch_prompts.append(prompt)
         
-        # Send all prompts together in one batch.
-        # (Assuming vLLM accepts a list of prompts.)
-        # vllm_outputs = llm.generate(batch_prompts, sampling_params)
+
         model_name = "gpt-4.1-mini"
-        # model_name = "gpt-4o-mini"
-        # model_name = "gpt-4.1-nano"
+
             
         with ThreadPoolExecutor(max_workers=12) as pool:
             api_outputs = list(pool.map(
@@ -313,33 +155,20 @@ def evaluate_checkpoint(
         for i, output_obj in enumerate(api_outputs):
             # Retrieve generated text.
             generated_text = output_obj
-            ## Use regex to extract text up to </attempt>
-            # pattern = r"(?s)^.*?</attempt>"
-            # m = re.match(pattern, generated_text, flags=re.DOTALL)
-            # if m:
-            #     model_answer = m.group(0)
-            # else:
-            #     model_answer = ""
 
-            # m = re.search(r'^(?:.*Answer:)\s*(.*)$', generated_text, re.DOTALL)
 
             pattern = re.compile(r'<answer>(.*?)</answer>', re.DOTALL)
 
-            # first or last, could be an important difference
 
-            # print("before extraction", "-"*20)
-            # print(generated_text)
             try:
                 generated_text = pattern.findall(generated_text)[0]
-                # generated_text = generated_text[8:-9]
-                # generated_text = generated_text.split("<answer>")[1]
+
             except:
                 generated_text = ""
-            # print("after extraction", "+"*20)
-            # print(generated_text)
+
 
             m = re.search(r'^(?:.*\*\*Answer\*\*):\s*(.*)$', generated_text, re.DOTALL)
-            # pattern = r'^(?:.*\*\*Answer\*\*):\s*(.*)$'
+
             if m:
                 model_answer = m.groups()[-1].strip()
             else:
@@ -352,65 +181,7 @@ def evaluate_checkpoint(
             if "\\\\(" in model_answer:
                 print("found \\\\("*20)
                 model_answer = model_answer.replace("\\\\(", "")
-                
-            # pattern = re.compile(r'<answer>(.*?)</answer>', re.DOTALL)
-            # try:
-            #     model_answer = pattern.findall(generated_text)[0]
-            # except:
-            #     model_answer = ""
-                
-            # if rejection_sampling:
-            #     model_answer = generated_text
-
-            # eval_prompt = f"Instruction: You are a seasoned comedy critic. Read the Base Answer and the TEXT below and rate the TEXT's overall humor on a 1‑to‑10 scale, where 1 means way less funny compared to the Base Answer, 5 means TEXT is as funny as the Base Answer and 10 means way more hilarious, laugh‑out‑loud than the Base Answer.  Base Answer: {samples[i]['weak_demos'][0]['answer']} TEXT:<<<{model_answer}>>> Return your answer in exactly this format: Humor rating: <integer 1‑10>.\n Response:"
-            
-            # eval_prompt = (
-            #     f"Instruction: You are a seasoned comedy critic. Read the Base Answer and the TEXT below and "
-            #     "rate the TEXT's overall humor on a 1‑to‑10 scale, where 1 means about as funny as the Base Answer, "
-            #     "2 means roughly twice as funny, …, and 10 means about ten times funnier—truly laugh‑out‑loud compared to the Base Answer. "
-            #     f"Base Answer: {samples[i]['weak_demos'][0]['answer']} "
-            #     f"TEXT:<<<{model_answer}>>> "
-            #     "Return your answer in exactly this format: Humor rating: <integer 1‑10>.\n Response:"
-            # )
-            
-                
-
-
-            # eval_prompt = (
-            #     f"Instruction: Please act as an impartial judge and evaluate the quality of the responses provided by an AI assistant. Read the **Base Answer** and the **TEXT** below, "
-            #     "Assess the humor of the TEXT compared to the Base Answer on a 1‑to‑10 scale."
-            #     "Begin with a brief, objective explanation of your reasoning."
-            #     "After the explanation, you must rate the response outputting in this format (no extra text): Humor rating: <integer 1‑10>.\n"
-            #     "Response:"
-            # )
-            # eval_prompt = (
-            #     f"Instruction: Please act as an impartial judge and evaluate the quality of the responses provided by an AI assistant. Read the **Base Answer** and the **TEXT** below, "
-            #     "Assess the humor of the TEXT compared to the Base Answer on a 1‑to‑10 scale."
-            #     # "Begin with a brief, objective explanation of your reasoning."
-            #     "You must rate the response outputting in this format (no extra text): Humor rating: <integer 1‑10>.\n"
-            #     "Response:"
-            # )
-            
-            # eval_prompt = (
-            #     f"Instruction: Please act as an impartial judge and evaluate the quality of the responses provided by an AI assistant. Read the **Base Answer** and the **TEXT** below, "
-            #     "then rate how much funnier the TEXT is than the Base Answer on a 1‑to‑10 scale.\n\n"
-            #     "Imagine readig this paragraph in front of an audiance. Rubric (relative to the Base Answer):\n"
-            #     "  1 — About as funny; virtually no extra laughs.\n"
-            #     "  2 — Roughly twice as funny; mild smirk.\n"
-            #     "  3 — Three × funnier; a few soft chuckles.\n"
-            #     "  4 — Four ×; steady chuckling.\n"
-            #     "  5 — Five ×; consistent laughs across the room.\n"
-            #     "  6 — Six ×; strong humor, several standout lines.\n"
-            #     "  7 — Seven ×; loud laugh‑out‑loud moments.\n"
-            #     "  8 — Eight ×; sustained laughter, tear‑wipes.\n"
-            #     "  9 — Nine ×; roaring laughter, crowd struggles to stop.\n"
-            #     "  10 — Ten ×; uncontrollable, prolonged laughter; comedy gold.\n\n"
-            #     f"Base Answer: {samples[i]['weak_demos'][0]['answer']} "
-            #     f"TEXT:<<<{model_answer}>>> "
-            #     "Return your answer in exactly this format: Humor rating: <integer 1‑10>.\n"
-            #     "Response:"
-            # )
-
+   
             eval_prompt_list.append(model_answer)
         
         eval_result_list = []
@@ -503,13 +274,7 @@ def evaluate_checkpoint(
                 generated_text = ""
 
             
-            # Use regex to extract text up to </attempt>
-            # pattern = re.compile(r'<answer>(.*?)</answer>', re.DOTALL)
-            # try:
-            #     model_answer = pattern.findall(generated_text)[0]
-            # except:
-            #     model_answer = ""
-            # m = re.search(r'^(?:.*Answer:)\s*(.*)$', generated_text, re.DOTALL)
+
             m = re.search(r'^(?:.*\*\*Answer\*\*):\s*(.*)$', generated_text, re.DOTALL)
             if m:
                 model_answer = m.groups()[-1].strip()
@@ -520,40 +285,6 @@ def evaluate_checkpoint(
 
             
                 
-            # if rejection_sampling:
-            #     model_answer = generated_text
-
-
-
-#             eval_prompt = f"You are a seasoned comedy critic. Read the TEXT below and rate its overall humor on a 1‑to‑10 scale, where 1 means not funny at all” and 10 means hilarious, laugh‑out‑loud. Return your answer in exactly this format: Humor rating: <integer 1‑10> TEXT:<<<{model_answer}>>>"
-#             sampling_params_eval = SamplingParams(temperature=0.0, top_p=1.0, max_tokens=128)
-
-#             eval_result = llm.generate([eval_prompt], sampling_params_eval)
-
-            # if round_idx != 0:
-
-                # eval_result = eval_result_list[i]
-
-                # _RATING_RE = re.compile(r"Humor rating:\s*(10|[1-9])\b")
-
-
-                # def get_humor_rating(text):
-                #     """Return the humor rating or None if the pattern isn't present."""
-                #     m = _RATING_RE.search(text)
-                #     return int(m.group(1)) if m else None
-                # if api_eval:
-                #     reward_str = get_humor_rating(eval_result)
-                # else:
-                #     reward_str = get_humor_rating(eval_result.outputs[0].text)
-                # try:
-                #     reward_value = int(reward_str)
-                # except:
-                #     reward_value = 0
-                # if api_eval: 
-                #     print("[]"*20, "\n eval_result", eval_result)
-                # else:
-                #     print("[]"*20, "\n eval_result", eval_result.outputs[0].text)
-                # print("--"*10) 
             try:
                 accuracy_reward_value = float(-np.abs(eval_result_list[i] - 24))
             except:
@@ -572,13 +303,8 @@ def evaluate_checkpoint(
 
             eval_response = eval_api_outputs[i]
 
-            # m = re.search(r'^(?:.*\*\*Answer\*\*):\s*(.*)$', generated_text, re.DOTALL)
-            # if m:
-            #     model_judge_answer = m.groups()[-1].strip()
-            # else:
-            #     model_judge_answer = ""
+            
 
-            # pattern = re.compile(r'\*\*Answer\*\*\s*:\s*(\d+)', re.DOTALL)
             pattern = re.compile(r'\*\*Answer\*\*\s*:\s*([+-]?\d+)')
 
             m = pattern.search(eval_response)
@@ -590,41 +316,13 @@ def evaluate_checkpoint(
                 print("No match")
                 gpt_eval_reward = 0
 
-            # eval_response = eval_response.split("**Answer**:")[-1].strip()
-
-            # try: 
-            #     gpt_eval_reward = -float(eval_response)
-            # except:
-            #     gpt_eval_reward = 0
+            
 
             gpt_eval_reward_str = f"{gpt_eval_reward:.2f}"
 
 
 
-            # # Compute reward.
-            # reward_value = len(model_answer) / num_char
-            # reward_str = f"{reward_value:.2f}"
-
-
-
-            # # Create a weak demo dictionary.
-            # weak_demo = {
-            #     "prompt": samples[i]["question"],
-            #     "answer": model_answer,
-            #     "reward": reward_str,
-            #     "format_reward": format_reward_str
-            # }
-            # # Append to the sample's weak demo history.
-            # samples[i]["weak_demos"].append(weak_demo)
-            # # Record the round output.
-            # samples[i]["output"].append({
-            #     "round": round_idx,
-            #     "prompt": batch_prompts[i],
-            #     "answer": model_answer,
-            #     "generated_text": generated_text,
-            #     "reward": reward_value,
-            #     "format_reward": format_reward
-            # })
+            
             weak_demo = {
                 "prompt": samples[i]["question"],
                 "answer": generated_text,
@@ -708,4 +406,3 @@ if __name__ == "__main__":
     # main()
 
 
-x

@@ -42,25 +42,20 @@ def remove_stopwords_and_lemmatize(text, do_stemming=False, lemmatize=False):
     return ' '.join(filtered_text_lemmatized)
 
 def get_best_matched_action_using_sent_transformer(allowed_actions, query, model, device="cpu"):
-    # Batch encode with caching
     def encode_batch(texts):
-        # Identify which texts need encoding
         to_encode = []
         
         for text in texts:
             if text not in EMBEDDING_CACHE:
                 to_encode.append(text)
         
-        # Encode new texts in a single batch if any
         if to_encode:
             new_embeddings = model.encode(to_encode)
             for i, text in enumerate(to_encode):
                 EMBEDDING_CACHE[text] = new_embeddings[i]
                 
-        # Return embeddings for all texts
         return np.array([EMBEDDING_CACHE[text] for text in texts])
 
-    # print(f"size of allowed_actions: {len(allowed_actions)}")
     if query in allowed_actions:
         return query, [(query, 1.0)]
 
@@ -85,13 +80,9 @@ def get_best_matched_action_using_sent_transformer(allowed_actions, query, model
         max_filtered_actions = 10000
 
     allowed_actions_filtered = [allowed_actions[ind] for ind in indices_actions_sorted_desc_word_sim[:max_filtered_actions]]
-    # print(f"actions_sorted_desc_word_sim: {allowed_actions_filtered[0:10]}")
-    # print(f"size of allowed_actions_filtered: {len(allowed_actions_filtered)}")
 
-    # Second pass: Use the sentence transformer to find the best-matched action
     action_list_embeddings = encode_batch(allowed_actions_filtered)
     
-    # Handle query embedding
     query = query[:8000]
     if query not in EMBEDDING_CACHE:
         EMBEDDING_CACHE[query] = model.encode([query])[0]
@@ -103,19 +94,9 @@ def get_best_matched_action_using_sent_transformer(allowed_actions, query, model
     )
     max_id = np.argmax(sim)
 
-    # Sort the actions by similarity score
-    # First, pack the actions and similarity scores into a list of tuples
     action_sim_tuples = []
     for i in range(len(allowed_actions_filtered)):
         action_sim_tuples.append((allowed_actions_filtered[i], sim[0][i]))
-    # Second, sort the list of tuples by the similarity score
     action_sim_tuples.sort(key=lambda x: x[1], reverse=True)
-    # Return the top 5 tuples
-    # top5_action_sim_tuples = action_sim_tuples[:5]
-    # Convert top5 to float so that it can be serialized to JSON
     top5_action_sim_tuples = [(x[0], float(x[1])) for x in action_sim_tuples]
-    # print(f"top5_action_sim_tuples: {top5_action_sim_tuples}")
-
-    # print(f"size of allowed_actions_filtered: {len(allowed_actions_filtered)}")
-
     return allowed_actions_filtered[max_id], top5_action_sim_tuples

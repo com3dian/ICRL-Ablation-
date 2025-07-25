@@ -15,8 +15,6 @@ class State:
         self,
         reward: float = None,
         finished: bool = False,
-        # success: bool = False,
-        # terminate_reason: str = None,
     ):
         """
         The history should be a format like:
@@ -30,8 +28,6 @@ class State:
         self.history: List[Dict[str, Any]] = []
         self.reward: float = reward
         self.finished: bool = finished
-        # self.success: bool = success
-        # self.terminate_reason: str = terminate_reason
         self.error: Optional[str] = None
         self.steps = 0
         self.invalid_action_count = 0
