@@ -553,7 +553,7 @@ def save_data_snapshot(data, config, filename, delete=None):
                     'rewards': attempt.rewards,
                     'attempt_prompts': attempt.attempt_prompts,
                     'extra_fields': attempt.extra_fields,
-                    'reflexion': attempt.reflexion
+                    # 'reflexion': attempt.reflexion
                 } for attempt_id, attempt in env_data.get('bootstrap_attempts', {}).items()
             },
             'round_attempts': {
@@ -562,7 +562,7 @@ def save_data_snapshot(data, config, filename, delete=None):
                         'rewards': attempt.rewards,
                         'attempt_prompts': attempt.attempt_prompts,
                         'extra_fields': attempt.extra_fields,
-                        'reflexion': attempt.reflexion
+                        # 'reflexion': attempt.reflexion
                     } for attempt_id, attempt in round_data.items()
                 } for round_id, round_data in env_data.get('round_attempts', {}).items()
             }
@@ -892,7 +892,6 @@ async def run_evaluation(config: SciWorldConfig, data: dict = None):
             
             turn = 0
             context_prompt = None   
-            messages_copy = None
 
             def build_prompt(messages):
                 nonlocal turn
