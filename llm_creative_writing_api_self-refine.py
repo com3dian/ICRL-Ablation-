@@ -400,8 +400,8 @@ def evaluate_checkpoint(
             if rejection_sampling:
                 this_time_change += "best_of_n_"
             else:
-                this_time_change += "self_refine_done_right_70_continued"
-            this_time_change += "100_gpt_4.1_same_base"
+                this_time_change += "self_refine_"
+            this_time_change += "seperate_run"
 
             this_time_change += f"_evalnum_{max_eval_samples}"
             run = f"{this_time_change}_n_{n}"
@@ -433,5 +433,5 @@ def evaluate_checkpoint(
 if __name__ == "__main__":
     print("Evaluating checkpoint in batch mode...")
     # Test with fewer rounds to verify implementation
-    evaluate_checkpoint(n=20)  # 20 rounds for testing
+    evaluate_checkpoint(n=100)  # 100 rounds for full experiment
     # main()

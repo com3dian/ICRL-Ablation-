@@ -392,5 +392,5 @@ def evaluate_checkpoint(
 if __name__ == "__main__":
     print("Evaluating checkpoint in batch mode...")
     # Test with fewer rounds to verify implementation
-    evaluate_checkpoint(n=20)  # 20 rounds for testing
+    evaluate_checkpoint(n=100)  # 100 rounds for full experiment
     # main()
