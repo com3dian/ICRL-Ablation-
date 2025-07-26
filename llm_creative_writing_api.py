@@ -19,7 +19,7 @@ from openai import OpenAI
 num_char = 200
 
 
-api_eval = True
+api_eval = False  # Set to False to use vLLM instead of OpenAI
 
 
 rejection_sampling = 0
@@ -36,12 +36,17 @@ zero_reward = 0
 exploration_or_exploitation = 0
 num_weak_demo = 3000
 
-load_samples = 1
+load_samples = 0  # Don't load previous samples for testing
 
 sort_by_reward = 0
 
-
-client = OpenAI(api_key="Your_API_Key")
+# Initialize vLLM model when not using API
+if not api_eval:
+    llm = LLM(model="Qwen/Qwen3-32B", 
+              tensor_parallel_size=2,  # Adjust based on GPU count
+              gpu_memory_utilization=0.95)
+else:
+    client = OpenAI(api_key="Your_API_Key")
 
 
 
@@ -52,27 +57,47 @@ exploitation_instruction = "Instruction: You will be given multiple <attempt>…
 explore_or_exploit_instruction = "Instruction: Examine all the `<attempt>…</attempt>` examples, each showing a candidate Response and its Reward. You have two options, exploration or exploitation. For exploration, provide a response that is different from previous attempts demonstrated in the context, and wrap it in `<answer>…</answer>`. For exploitation, make the best educated guess based on the high reward attempts to produce response that can achieve a higher reward, while making sure it correctly follows the task instruction, and put it in `<answer>…</answer>` format. Pick one option to follow."
 
 
-sys.path.append('/tree-of-thought-llm/src')
+# Load prompts directly to avoid import issues
+cot_prompt = '''
+Write a coherent passage of 4 short paragraphs. The end sentence of each paragraph must be: {input}
 
+Make a plan then write. Your output should be of the following format:
 
-from tot.tasks import get_task
-from tot.prompts.text import (
-    standard_prompt,
-    cot_prompt,
-    vote_prompt,
-    compare_prompt,
-)
+Plan:
+Your plan here.
+
+Passage:
+Your passage here.
+'''
+
+# Simple task implementation that loads the actual data
+class TextTask:
+    def __init__(self):
+        # Load the actual data from tot
+        data_path = '/sfs/weka/scratch/ks8vf/tree-of-thought-llm/src/tot/data/text/data_100_random_text.txt'
+        self.data = open(data_path).readlines()
+    
+    def __len__(self):
+        return len(self.data)
+    
+    def get_input(self, idx):
+        return self.data[idx % len(self.data)].strip()
+
+def get_task(name):
+    if name == "text":
+        return TextTask()
+    raise ValueError(f"Unknown task: {name}")
 
 
 def evaluate_checkpoint(
     checkpoint_path="creative_writing",
-    base_model_id="GPT-4.1",
+    base_model_id="Qwen/Qwen3-32B",
     split="test",
     max_eval_samples=45,
     n=51,
     max_new_tokens=1000
 ):
-    num_samples = 100
+    num_samples = 100  # Test with 5 samples
     
     max_eval_samples = num_samples
 
@@ -160,13 +185,18 @@ def evaluate_checkpoint(
 
             batch_prompts.append(prompt)
         
-        model_name = "gpt-4.1"
-            
-        with ThreadPoolExecutor(max_workers=12) as pool:
-            api_outputs = list(pool.map(
-                lambda p: client.responses.create(model=model_name, input=p).output_text,
-                batch_prompts
-            ))
+        if api_eval:
+            # Use OpenAI API for generation
+            model_name = "gpt-4.1"
+            with ThreadPoolExecutor(max_workers=12) as pool:
+                api_outputs = list(pool.map(
+                    lambda p: client.responses.create(model=model_name, input=p).output_text,
+                    batch_prompts
+                ))
+        else:
+            # Use vLLM for generation
+            vllm_outputs = llm.generate(batch_prompts, sampling_params)
+            api_outputs = [output.outputs[0].text for output in vllm_outputs]
         
         eval_prompt_list = []
         
@@ -206,7 +236,7 @@ def evaluate_checkpoint(
                     
                 base_answer = """At dawn, golden light slips past pale curtains, rousing the world in quiet celebration. A lone robin greets the morning with a clear, cheerful trill, its song drifting across dew-laden grass. A gentle breeze stirs the leaves, carrying the fresh, earthy scent of new growth. Nearby, rooftops and empty streets lie poised between night’s calm and the city’s stirring pulse, promising simple comforts like a warm cup of coffee. In this tranquil pause, one senses life’s renewal and the gentle invitation to greet the day with hope and gratitude."""
                 
-                eval_prompt = f"Instruction: You are a seasoned text coherence evaluator. Read the TEXT below and rate the TEXT’s overall coherency on a 1-to-10 scale, where 1 means less coherent than the Base Answer, 5 means as coherent as the Base Answer, and 10 means way more coherent than the Base Answer. Be a strict and conservative evaluator and only gave a high score when the TEXT is truly better than the Base Answer. Base Answer: <<<{base_answer}>>> TEXT:<<<{model_answer}>>> Return your answer in exactly this format: Coherency score: <integer 1-10>. \nResponse:"
+                eval_prompt = f"Instruction: You are a seasoned text coherence evaluator. Read the TEXT below and rate the TEXT’s overall coherency on a 1-to-10 scale, where 1 means less coherent than the Base Answer, 5 means as coherent as the Base Answer, and 10 means way more coherent than the Base Answer. Be a strict and conservative evaluator and only gave a high score when the TEXT is truly better than the Base Answer. Base Answer: <<<{base_answer}>>> TEXT:<<<{model_answer}>>> Return your answer in exactly this format: Coherency score: <integer 1-10>. One-shot example: Base Answer: <<<A>>>  TEXT:<<<B>>> Assistant: Coherency score: <integer 1-10>. Reasoning: < 2 concise sentences explaining why you chose that score>\nResponse:"
 
                 eval_prompt_list.append(eval_prompt)
 
@@ -216,8 +246,7 @@ def evaluate_checkpoint(
            
             
             if api_eval:
-            
-
+                # Use OpenAI API for evaluation
                 model_name = "gpt-4.1"
                 with ThreadPoolExecutor(max_workers=12) as pool:
                     eval_result_list = list(pool.map(
@@ -225,7 +254,9 @@ def evaluate_checkpoint(
                         eval_prompt_list
                     ))
             else:
-                eval_result_list = judge_llm.generate(eval_prompt_list, sampling_params_eval)
+                # Use vLLM for evaluation
+                eval_vllm_outputs = llm.generate(eval_prompt_list, sampling_params_eval)
+                eval_result_list = [output.outputs[0].text for output in eval_vllm_outputs]
 
 
             _RATING_RE = re.compile(r"Coherency score:\s*(10|[1-9])\b")
@@ -264,18 +295,12 @@ def evaluate_checkpoint(
                     """Return the humor rating or None if the pattern isn't present."""
                     m = _RATING_RE.search(text)
                     return int(m.group(1)) if m else None
-                if api_eval:
-                    reward_str = get_humor_rating(eval_result)
-                else:
-                    reward_str = get_humor_rating(eval_result.outputs[0].text)
+                reward_str = get_humor_rating(eval_result)
                 try:
                     reward_value = int(reward_str)
                 except:
                     reward_value = 0
-                if api_eval: 
-                    print("[]"*20, "\n eval_result", eval_result)
-                else:
-                    print("[]"*20, "\n eval_result", eval_result.outputs[0].text)
+                print("[]"*20, "\n eval_result", eval_result)
                 print("--"*10)
                 print("reward_str", reward_str)
                 print('reward_value', reward_value)
@@ -340,14 +365,14 @@ def evaluate_checkpoint(
             if rejection_sampling:
                 this_time_change += "best_of_n_"
             else:
-                this_time_change += "ICRL_simple_prompt_long_iterations_continued_"
-            this_time_change += "100_gpt_4.1_same_base"
+                this_time_change += "ICRL_"
+            this_time_change += "new_eval_prompt"
 
             this_time_change += f"_evalnum_{max_eval_samples}"
             run = f"{this_time_change}_n_{n}"
-            path = f"/sfs/weka/scratch/ks8vf/ICL/{task}/{base_model_id}/{run}"
+            path = f"/sfs/weka/scratch/ks8vf/code_submission/ICL/{task}/{base_model_id}/{run}"
             
-            path = f"/sfs/weka/scratch/ks8vf/ICL/{task}/{base_model_id}/{run}"
+            path = f"/sfs/weka/scratch/ks8vf/code_submission/ICL/{task}/{base_model_id}/{run}"
             os.makedirs(path, exist_ok=True)
 
             with open(f'{path}/gen_list_n={n}_mt={max_new_tokens}.pkl', "wb") as f:
@@ -372,4 +397,5 @@ def evaluate_checkpoint(
 
 if __name__ == "__main__":
     print("Evaluating checkpoint in batch mode...")
-    evaluate_checkpoint()
+    # Test with fewer rounds to verify implementation
+    evaluate_checkpoint(n=100)  # 100 rounds for full experiment
