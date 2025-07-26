@@ -43,7 +43,7 @@ sort_by_reward = 0
 # Initialize vLLM model when not using API
 if not api_eval:
     llm = LLM(model="Qwen/Qwen3-32B", 
-              tensor_parallel_size=1,  # Adjust based on GPU count
+              tensor_parallel_size=2,  # Adjust based on GPU count
               gpu_memory_utilization=0.95)
 else:
     client = OpenAI(api_key="Your_API_Key")
@@ -97,7 +97,7 @@ def evaluate_checkpoint(
     n=51,
     max_new_tokens=1000
 ):
-    num_samples = 5  # Test with 5 samples
+    num_samples = 100  # Test with 5 samples
     
     max_eval_samples = num_samples
 
@@ -365,14 +365,14 @@ def evaluate_checkpoint(
             if rejection_sampling:
                 this_time_change += "best_of_n_"
             else:
-                this_time_change += "ICRL_simple_prompt_long_iterations_continued_"
-            this_time_change += "100_gpt_4.1_same_base"
+                this_time_change += "ICRL_"
+            this_time_change += ""
 
             this_time_change += f"_evalnum_{max_eval_samples}"
             run = f"{this_time_change}_n_{n}"
-            path = f"/sfs/weka/scratch/ks8vf/ICL/{task}/{base_model_id}/{run}"
+            path = f"/sfs/weka/scratch/ks8vf/code_submission/ICL/{task}/{base_model_id}/{run}"
             
-            path = f"/sfs/weka/scratch/ks8vf/ICL/{task}/{base_model_id}/{run}"
+            path = f"/sfs/weka/scratch/ks8vf/code_submission/ICL/{task}/{base_model_id}/{run}"
             os.makedirs(path, exist_ok=True)
 
             with open(f'{path}/gen_list_n={n}_mt={max_new_tokens}.pkl', "wb") as f:
