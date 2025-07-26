@@ -11,6 +11,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 import anyio
 from openai import AsyncOpenAI
+import openai
 from collections import defaultdict
 from datetime import datetime
 from dataclasses import dataclass, field
@@ -30,6 +31,8 @@ import traceback
 from datasets import load_dataset
 from unittest.mock import MagicMock, AsyncMock
 import tiktoken
+from transformers import AutoTokenizer
+
 dotenv.load_dotenv()
 
 # Set up logging
@@ -75,10 +78,10 @@ class MathConfig:
     high_reward_only: bool = False
 
     # Experiment parameters
-    dataset_name: str = "HuggingFaceH4/MATH-500"
-    split_name: str = "test"
+    dataset_name: str = "MathArena/aime_2025"
+    split_name: str = "train"
     num_initial_attempts: int = 2
-    num_problems: int = -1 # -1 means all problems
+    num_problems: int = 10 # -1 means all problems
     rounds: int = 40
     
     # Model configuration
@@ -89,6 +92,7 @@ class MathConfig:
     score_vllm_context_size: int = 2048
     disable_reasoning: bool = True
     temperature: float = 1.0  
+    max_completion_tokens: int = 4096
 
     checkpoint_path: Optional[str] = None
     
@@ -227,7 +231,7 @@ def parse_args():
     if config.postfix:
         postfix = postfix + "_" + config.postfix
     output_path = Path(base_path) / config.output_path / config.icrl_mode.value / postfix
-    config.sw_output_path = str(output_path)
+    config.output_path = str(output_path)
 
     config.is_openrouter = '/' in config.model_name
 
@@ -325,56 +329,72 @@ def extract_answer(output):
         # logger.warning(f"{colorama.Fore.YELLOW}No answer found in {colorama.Fore.RESET} {output}")
         return 0
 
-score_client = None
-async def get_reward_for_answer(model_output, problem_instance: DataStore.Problem, config: MathConfig):
-    global score_client
-    if score_client is None:
-        score_client = AsyncOpenAI(base_url=config.score_vllm_address)
+class RewardModel:
+    def __init__(self, config: MathConfig):
+        self.score_client = AsyncOpenAI(base_url=config.score_vllm_address)
         if config.debug_run:
-            mock_reward_client(score_client)
+            mock_reward_client(self.score_client)
+        self.encoding = AutoTokenizer.from_pretrained(config.score_model_name)
 
-    reference = problem_instance.answer
-    model_answer = extract_answer(model_output)
-    if model_answer == reference:
-        return 1
-    else:
-        # truncate the model output to max_model_output_tokens
-        
-        messages = [{
-            "role": "user",
-            "content": config.reward_model_instruction.format(
-                question=problem_instance.problem,
-                response=model_output,
-                reference=problem_instance.answer,
-            ),
-        }]
-        
-        encoding = tiktoken.encoding_for_model('gpt-4o')
-        input_tokens = encoding.encode(messages[0]['content'])
-        diff = config.score_vllm_context_size - len(input_tokens)
-        print(diff)
-        if diff < 100:
-            truncated_model_output = encoding.decode(encoding.encode(model_output)[-diff + 100:])
+    async def get_reward_for_answer(self, model_output, problem_instance: DataStore.Problem, config: MathConfig):
+        reference = problem_instance.answer
+        model_answer = extract_answer(model_output)
+        if model_answer == reference:
+            return 1
+        else:
+            # truncate the model output to max_model_output_tokens
+            
             messages = [{
                 "role": "user",
                 "content": config.reward_model_instruction.format(
                     question=problem_instance.problem,
-                    response=truncated_model_output,
+                    response=model_output,
                     reference=problem_instance.answer,
                 ),
             }]
+            
+            input_tokens = self.encoding.encode(messages[0]['content'])
+            diff = config.score_vllm_context_size - len(input_tokens)
+            safe_dist = 50
+            if diff < safe_dist:
+                truncated_model_output = self.encoding.decode(self.encoding.encode(model_output)[-diff + safe_dist:])
+                messages = [{
+                    "role": "user",
+                    "content": config.reward_model_instruction.format(
+                        question=problem_instance.problem,
+                        response=truncated_model_output,
+                        reference=problem_instance.answer,
+                    ),
+                }]
 
-        reward_output = await generate_model_output(score_client, config.score_model_name, messages, config, logprobs=True)
 
-        reward_answer = reward_output.choices[0].message.content
-        if reward_answer == "YES":
-            return np.exp(reward_output.choices[0].logprobs.content[0].logprob)
-        elif reward_answer == "NO":
-            return 1 - np.exp(reward_output.choices[0].logprobs.content[0].logprob)
-        else:
-            logger.warning(
-                f"{colorama.Fore.YELLOW}Invalid reward answer:{colorama.Fore.RESET} {reward_answer} \n for problem {problem_instance['problem']} \n model output: {model_output}")
-            return 0
+            try:
+                reward_output = await generate_model_output(
+                    self.score_client,
+                    config.score_model_name,
+                    messages,
+                    config,
+                    logprobs=True,
+                    max_completion_tokens=10,
+                )
+            except openai.BadRequestError as e:
+                import pprint
+                print(colorama.Fore.YELLOW + "length of input tokens" + colorama.Fore.RESET, len(input_tokens))
+                print(colorama.Fore.YELLOW + "messages" + colorama.Fore.RESET)
+                pprint.pprint(messages)
+                print(colorama.Fore.YELLOW + "model_output" + colorama.Fore.RESET)
+                pprint.pprint(model_output)
+                raise e
+
+            reward_answer = reward_output.choices[0].message.content
+            if reward_answer == "YES":
+                return np.exp(reward_output.choices[0].logprobs.content[0].logprob)
+            elif reward_answer == "NO":
+                return 1 - np.exp(reward_output.choices[0].logprobs.content[0].logprob)
+            else:
+                logger.warning(
+                    f"{colorama.Fore.YELLOW}Invalid reward answer:{colorama.Fore.RESET} {reward_answer} \n for problem {problem_instance['problem']} \n model output: {model_output}")
+                return 0
 
 def merge_same_role_messages(messages):
     merged_messages = []
@@ -392,6 +412,10 @@ async def generate_model_output(client: AsyncOpenAI, model_name: str, messages: 
                 "enable_reasoning": False,
             },
         }
+    default_kwargs = {
+        "max_completion_tokens": config.max_completion_tokens,
+    }
+    kwargs = {**default_kwargs, **kwargs}
 
     output = await client.chat.completions.create(
         model=model_name,
@@ -413,6 +437,7 @@ async def run_evaluation(config: MathConfig, data: DataStore = None):
     client = AsyncOpenAI(base_url=config.vllm_address)
     if config.debug_run:
         mock_client(client)
+    reward_model = RewardModel(config)
 
     async def initial_interaction(problem_idx):
         problem_instance = data.problem_histories[problem_idx].problem
@@ -423,7 +448,7 @@ async def run_evaluation(config: MathConfig, data: DataStore = None):
             output = await generate_model_output(client, config.model_name, messages, config)
             model_output = output.choices[0].message.content
             
-            reward = await get_reward_for_answer(model_output, problem_instance, config)
+            reward = await reward_model.get_reward_for_answer(model_output, problem_instance, config)
             
             attempt = DataStore.Attempt(
                 raw_prompt=messages,
@@ -437,7 +462,7 @@ async def run_evaluation(config: MathConfig, data: DataStore = None):
         for i in range(len(data.problem_histories)):
             tg.start_soon(initial_interaction, i)
     
-    data.save_data_snapshot(config, f"data_initial_attempts.json")
+    data.save_data_snapshot(config, f"data_initial_attempts.pkl")
     
     rewards = []
     for i in range(len(data.problem_histories)):
@@ -462,7 +487,7 @@ async def run_evaluation(config: MathConfig, data: DataStore = None):
             output = await generate_model_output(client, config.model_name, messages, config)
             model_output = output.choices[0].message.content
             
-            reward = await get_reward_for_answer(model_output, data.problem_histories[i].problem, config)
+            reward = await reward_model.get_reward_for_answer(model_output, data.problem_histories[i].problem, config)
             
             data.problem_histories[i].attempts.append(DataStore.Attempt(
                 raw_prompt=messages,
@@ -483,7 +508,7 @@ async def run_evaluation(config: MathConfig, data: DataStore = None):
             output = await generate_model_output(client, config.model_name, messages, config)
             model_output = output.choices[0].message.content
             
-            reward = await get_reward_for_answer(model_output, data.problem_histories[question_idx].problem, config)
+            reward = await reward_model.get_reward_for_answer(model_output, data.problem_histories[question_idx].problem, config)
             
             current_attempt = DataStore.Attempt(
                 raw_prompt=copy.deepcopy(messages),
@@ -524,11 +549,11 @@ async def run_evaluation(config: MathConfig, data: DataStore = None):
                 
         data.save_data_snapshot(
             config,
-            f"data_round_{round_idx}_final.json",
+            f"data_round_{round_idx}_final.pkl",
             delete=(
-                f"data_round_{round_idx-1}_final.json"
+                f"data_round_{round_idx-1}_final.pkl"
                 if round_idx > 0
-                else "data_initial_attempts.json"
+                else "data_initial_attempts.pkl"
             ),
         )
         
@@ -542,20 +567,20 @@ async def run_evaluation(config: MathConfig, data: DataStore = None):
 def find_math_file(folder_path):
     """Find the math data file in a given folder."""
     # Look for the most recent round file first
-    pattern = os.path.join(folder_path, "data_round_*_final.json")
+    pattern = os.path.join(folder_path, "data_round_*_final.pkl")
     files = glob.glob(pattern)
     
     if files:
         # Sort by round number to get the latest
         def extract_round_num(filepath):
-            match = re.search(r"data_round_(\d+)_final\.json", os.path.basename(filepath))
+            match = re.search(r"data_round_(\d+)_final\.pkl", os.path.basename(filepath))
             return int(match.group(1)) if match else -1
         
         files.sort(key=extract_round_num, reverse=True)
         return files[0]
     
     # If no round files found, look for initial attempts file
-    initial_file = os.path.join(folder_path, "data_initial_attempts.json")
+    initial_file = os.path.join(folder_path, "data_initial_attempts.pkl")
     if os.path.exists(initial_file):
         return initial_file
     
