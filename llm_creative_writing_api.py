@@ -57,16 +57,36 @@ exploitation_instruction = "Instruction: You will be given multiple <attempt>…
 explore_or_exploit_instruction = "Instruction: Examine all the `<attempt>…</attempt>` examples, each showing a candidate Response and its Reward. You have two options, exploration or exploitation. For exploration, provide a response that is different from previous attempts demonstrated in the context, and wrap it in `<answer>…</answer>`. For exploitation, make the best educated guess based on the high reward attempts to produce response that can achieve a higher reward, while making sure it correctly follows the task instruction, and put it in `<answer>…</answer>` format. Pick one option to follow."
 
 
-sys.path.append('/sfs/weka/scratch/ks8vf/tree-of-thought-llm/src')
+# Load prompts directly to avoid import issues
+cot_prompt = '''
+Write a coherent passage of 4 short paragraphs. The end sentence of each paragraph must be: {input}
 
+Make a plan then write. Your output should be of the following format:
 
-from tot.tasks import get_task
-from tot.prompts.text import (
-    standard_prompt,
-    cot_prompt,
-    vote_prompt,
-    compare_prompt,
-)
+Plan:
+Your plan here.
+
+Passage:
+Your passage here.
+'''
+
+# Simple task implementation that loads the actual data
+class TextTask:
+    def __init__(self):
+        # Load the actual data from tot
+        data_path = '/sfs/weka/scratch/ks8vf/tree-of-thought-llm/src/tot/data/text/data_100_random_text.txt'
+        self.data = open(data_path).readlines()
+    
+    def __len__(self):
+        return len(self.data)
+    
+    def get_input(self, idx):
+        return self.data[idx % len(self.data)].strip()
+
+def get_task(name):
+    if name == "text":
+        return TextTask()
+    raise ValueError(f"Unknown task: {name}")
 
 
 def evaluate_checkpoint(
