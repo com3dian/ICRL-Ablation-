@@ -29,6 +29,7 @@ import pdb
 import traceback
 from datasets import load_dataset
 from unittest.mock import MagicMock, AsyncMock
+import tiktoken
 dotenv.load_dotenv()
 
 # Set up logging
@@ -81,10 +82,12 @@ class MathConfig:
     rounds: int = 40
     
     # Model configuration
-    model_name: str = "gpt-4.1-mini"
-    vllm_address: str = "http://localhost:11434"
-    score_model_name: str = "gpt-4.1-mini"
-    score_vllm_address: str = "http://localhost:11435"
+    model_name: str = "Qwen/Qwen3-32B"
+    vllm_address: str = "http://localhost:11435/v1"
+    score_model_name: str = "virtuoussy/Qwen2.5-7B-Instruct-RLVR"
+    score_vllm_address: str = "http://localhost:11436/v1"
+    score_vllm_context_size: int = 2048
+    disable_reasoning: bool = True
     temperature: float = 1.0  
 
     checkpoint_path: Optional[str] = None
@@ -198,9 +201,9 @@ def parse_args():
         # config.num_problems = 1
         config.rounds = 10
         # config.num_initial_attempts = 1
-        logger.debug("*"*100)
+        logger.debug(colorama.Fore.RED + "*"*100)
         logger.debug("Debug run")
-        logger.debug("*"*100)
+        logger.debug("*"*100 + colorama.Fore.RESET)
         
     if config.icrl_mode == Methods.RANDOM_SAMPLING:
         config.num_initial_attempts = 0
@@ -319,7 +322,7 @@ def extract_answer(output):
     if match:
         return match.group(1)
     else:
-        logger.info(f"No answer found in {output}")
+        # logger.warning(f"{colorama.Fore.YELLOW}No answer found in {colorama.Fore.RESET} {output}")
         return 0
 
 score_client = None
@@ -335,6 +338,8 @@ async def get_reward_for_answer(model_output, problem_instance: DataStore.Proble
     if model_answer == reference:
         return 1
     else:
+        # truncate the model output to max_model_output_tokens
+        
         messages = [{
             "role": "user",
             "content": config.reward_model_instruction.format(
@@ -343,18 +348,32 @@ async def get_reward_for_answer(model_output, problem_instance: DataStore.Proble
                 reference=problem_instance.answer,
             ),
         }]
-        reward_output = await score_client.chat.completions.create(
-            model=config.score_model_name,
-            messages=messages,
-        )
+        
+        encoding = tiktoken.encoding_for_model('gpt-4o')
+        input_tokens = encoding.encode(messages[0]['content'])
+        diff = config.score_vllm_context_size - len(input_tokens)
+        print(diff)
+        if diff < 100:
+            truncated_model_output = encoding.decode(encoding.encode(model_output)[-diff + 100:])
+            messages = [{
+                "role": "user",
+                "content": config.reward_model_instruction.format(
+                    question=problem_instance.problem,
+                    response=truncated_model_output,
+                    reference=problem_instance.answer,
+                ),
+            }]
+
+        reward_output = await generate_model_output(score_client, config.score_model_name, messages, config, logprobs=True)
 
         reward_answer = reward_output.choices[0].message.content
         if reward_answer == "YES":
-            return reward_output.choices[0].logprobs.token_logprobs[0]
+            return np.exp(reward_output.choices[0].logprobs.content[0].logprob)
         elif reward_answer == "NO":
-            return 1 - reward_output.choices[0].logprobs.token_logprobs[0]
+            return 1 - np.exp(reward_output.choices[0].logprobs.content[0].logprob)
         else:
-            logger.warning(f"Invalid reward answer: {reward_answer} \n for problem {problem_instance['problem']} \n model output: {model_output}")
+            logger.warning(
+                f"{colorama.Fore.YELLOW}Invalid reward answer:{colorama.Fore.RESET} {reward_answer} \n for problem {problem_instance['problem']} \n model output: {model_output}")
             return 0
 
 def merge_same_role_messages(messages):
@@ -365,6 +384,22 @@ def merge_same_role_messages(messages):
         else:
             merged_messages.append(message)
     return merged_messages
+
+async def generate_model_output(client: AsyncOpenAI, model_name: str, messages: list[dict], config: MathConfig, **kwargs):
+    if config.disable_reasoning:
+        kwargs["extra_body"] = {
+            "chat_template_kwargs": {
+                "enable_reasoning": False,
+            },
+        }
+
+    output = await client.chat.completions.create(
+        model=model_name,
+        messages=messages,
+        temperature=config.temperature,
+        **kwargs,
+    )
+    return output
 
 async def run_evaluation(config: MathConfig, data: DataStore = None):
     """
@@ -385,11 +420,7 @@ async def run_evaluation(config: MathConfig, data: DataStore = None):
             messages = [
                 {"role": "user", "content": f"{problem_instance.problem}"},
             ]
-            output = await client.chat.completions.create(
-                model=config.model_name,
-                messages=messages,
-                temperature=config.temperature,
-            )
+            output = await generate_model_output(client, config.model_name, messages, config)
             model_output = output.choices[0].message.content
             
             reward = await get_reward_for_answer(model_output, problem_instance, config)
@@ -428,11 +459,7 @@ async def run_evaluation(config: MathConfig, data: DataStore = None):
             messages.append({"role": "user", "content": f"\n\n{instruction}"})
             messages = merge_same_role_messages(messages)
             
-            output = await client.chat.completions.create(
-                model=config.model_name,
-                messages=messages,
-                temperature=config.temperature,
-            )
+            output = await generate_model_output(client, config.model_name, messages, config)
             model_output = output.choices[0].message.content
             
             reward = await get_reward_for_answer(model_output, data.problem_histories[i].problem, config)
@@ -453,11 +480,7 @@ async def run_evaluation(config: MathConfig, data: DataStore = None):
             messages.append({"role": "user", "content": f"\n\n{instruction}"})
             messages = merge_same_role_messages(messages)
             
-            output = await client.chat.completions.create(
-                model=config.model_name,
-                messages=messages,
-                temperature=config.temperature,
-            )
+            output = await generate_model_output(client, config.model_name, messages, config)
             model_output = output.choices[0].message.content
             
             reward = await get_reward_for_answer(model_output, data.problem_histories[question_idx].problem, config)
@@ -476,11 +499,7 @@ async def run_evaluation(config: MathConfig, data: DataStore = None):
             messages.append({"role": "user", "content": f"{instruction}"})
             current_attempt.extra_fields['reflection_raw_prompt'] = copy.deepcopy(messages)
             
-            output = await client.chat.completions.create(
-                model=config.model_name,
-                messages=messages,
-                temperature=config.temperature,
-            )
+            output = await generate_model_output(client, config.model_name, messages, config)
             model_output = output.choices[0].message.content
             
             if config.selfrefine:
