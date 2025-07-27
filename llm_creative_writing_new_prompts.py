@@ -53,13 +53,13 @@ else:
     client = OpenAI(api_key="Your_API_Key")
 
 if meta_instruction_change: 
-    exploitation_instruction = "Meta Prompt: surpass the highest reward observed so far. Review the attempts, then output your candidate inside `<answer>…</answer>`."
-    exploration_instruction = "Meta Prompt: Review every <attempt> (response + reward). Reply with a new, non‑repeating answer wrapped in `<answer>…</answer>` tags"
+    exploitation_instruction = "Meta Prompt: surpass the highest reward observed so far. Review the trials, then output your candidate inside `<response>…</response>`."
+    exploration_instruction = "Meta Prompt: Review every <trial> (response + reward). Reply with a new, non‑repeating answer wrapped in `<response>…</response>` tags"
 else: 
-    exploration_instruction = "Instruction: Examine all the `<attempt>…</attempt>` examples, each showing a candidate Response and its Reward. Provide a response that is different from previous attempts demonstrated in the context, and wrap it in `<answer>…</answer>`."
-    exploitation_instruction = "Instruction: You will be given multiple <attempt>…</attempt> entries. Each entry contains a candidate Response and its Reward. Your task: Based on the previous attempts, try your best to produce a response that can achieve a higher reward, while making sure it correctly follows the task instruction, and put it in `<answer>…</answer>` format."
+    exploration_instruction = "Instruction: Examine all the `<trial>…</trial>` examples, each showing a candidate Response and its Reward. Provide a response that is different from previous trials demonstrated in the context, and wrap it in `<response>…</response>`."
+    exploitation_instruction = "Instruction: You will be given multiple <trial>…</trial> entries. Each entry contains a candidate Response and its Reward. Your task: Based on the previous trials, try your best to produce a response that can achieve a higher reward, while making sure it correctly follows the task instruction, and put it in `<response>…</response>` format."
 
-explore_or_exploit_instruction = "Instruction: Examine all the `<attempt>…</attempt>` examples, each showing a candidate Response and its Reward. You have two options, exploration or exploitation. For exploration, provide a response that is different from previous attempts demonstrated in the context, and wrap it in `<answer>…</answer>`. For exploitation, make the best educated guess based on the high reward attempts to produce response that can achieve a higher reward, while making sure it correctly follows the task instruction, and put it in `<answer>…</answer>` format. Pick one option to follow."
+explore_or_exploit_instruction = "Instruction: Examine all the `<trial>…</trial>` examples, each showing a candidate Response and its Reward. You have two options, exploration or exploitation. For exploration, provide a response that is different from previous trials demonstrated in the context, and wrap it in `<response>…</response>`. For exploitation, make the best educated guess based on the high reward trials to produce response that can achieve a higher reward, while making sure it correctly follows the task instruction, and put it in `<response>…</response>` format. Pick one option to follow."
 
 
 # Load prompts directly to avoid import issues
@@ -156,7 +156,7 @@ def evaluate_checkpoint(
                 else:
                     weak_demos = sample["weak_demos"]
                 for weak_demo in weak_demos[-num_weak_demo:]:
-                    prompt += "<attempt>\n"
+                    prompt += "<trial>\n"
                     prompt += f"**Task Query**: {weak_demo['prompt']}\n"
                     if not no_reward: 
                         if zero_reward:
@@ -169,7 +169,7 @@ def evaluate_checkpoint(
                             prompt += f"**Reward**: {0.00}\n"
                         else:
                             prompt += f"**Reward**: {weak_demo['reward']}\n"
-                    prompt += "</attempt>"
+                    prompt += "</trial>"
                 if ICRL: 
                     if round_idx % 2 == 0:
                         prompt += exploration_instruction
@@ -184,7 +184,7 @@ def evaluate_checkpoint(
                 if exploration_or_exploitation:
                     prompt += explore_or_exploit_instruction
                 if no_ICRL:
-                    prompt += "Instruction: put your response to the following prompt in `<answer>…</answer>` format."
+                    prompt += "Instruction: put your response to the following prompt in `<response>…</response>` format."
 
             prompt += f"**Task Query**: {sample['question']}\n"
 
@@ -211,7 +211,7 @@ def evaluate_checkpoint(
                 # Retrieve generated text.
                 generated_text = output_obj
                     
-                pattern = re.compile(r'<answer>(.*?)</answer>', re.DOTALL)
+                pattern = re.compile(r'<response>(.*?)</response>', re.DOTALL)
                 try:
                     model_answer = pattern.findall(generated_text)[0]
                 except:
@@ -275,8 +275,8 @@ def evaluate_checkpoint(
         for i, output_obj in enumerate(api_outputs):
             # Retrieve generated text.
             generated_text = output_obj
-            # Use regex to extract text up to </attempt>
-            pattern = re.compile(r'<answer>(.*?)</answer>', re.DOTALL)
+            # Use regex to extract text between <response> tags
+            pattern = re.compile(r'<response>(.*?)</response>', re.DOTALL)
             try:
                 model_answer = pattern.findall(generated_text)[0]
             except:
