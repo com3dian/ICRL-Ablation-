@@ -414,10 +414,10 @@ def get_clinet(base_url, model_name):
 
 async def generate_model_output(client: AsyncOpenAI, model_name: str, messages: list[dict], config: MathConfig, **kwargs):
     kwargs["extra_body"] = kwargs.get("extra_body", {})
-    # if config.disable_reasoning:
-    #     kwargs["extra_body"]["chat_template_kwargs"] = {
-    #         "enable_reasoning": False,
-    #     }
+    if config.disable_reasoning:
+        kwargs["extra_body"]["chat_template_kwargs"] = {
+            "enable_reasoning": False,
+        }
     if 'openrouter' in str(client.base_url):
         kwargs["extra_body"]["provider"] = {
             "only": ["chutes"]
@@ -447,6 +447,8 @@ async def generate_model_output(client: AsyncOpenAI, model_name: str, messages: 
             logger.warning(f"Rate limit error: {e}")
         except openai.APIConnectionError as e:
             logger.warning(f"API connection error: {e}")
+        except Exception as e:
+            logger.warning(f"Error: {e}")
     return output
 
 class LengthTracker:
