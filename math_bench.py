@@ -298,8 +298,8 @@ class DataStore:
                 logger.info(f"Deleted previous snapshot: {delete}")
     
     @staticmethod
-    def load_data_snapshot(config, checkpoint_path): #! todo needs features
-        if config.debug_run:
+    def load_data_snapshot(checkpoint_path, is_debug=False): #! todo needs features
+        if is_debug:
             return None
         filename = find_math_file(checkpoint_path)
         with open(filename, "rb") as f:
@@ -414,15 +414,13 @@ def get_clinet(base_url, model_name):
 
 async def generate_model_output(client: AsyncOpenAI, model_name: str, messages: list[dict], config: MathConfig, **kwargs):
     kwargs["extra_body"] = kwargs.get("extra_body", {})
-    if config.disable_reasoning:
-        kwargs["extra_body"]["chat_template_kwargs"] = {
-            "chat_template_kwargs": {
-                "enable_reasoning": False,
-            },
-        }
-    if 'openrouter' in client.base_url:
+    # if config.disable_reasoning:
+    #     kwargs["extra_body"]["chat_template_kwargs"] = {
+    #         "enable_reasoning": False,
+    #     }
+    if 'openrouter' in str(client.base_url):
         kwargs["extra_body"]["provider"] = {
-            "only": "chutes"
+            "only": ["chutes"]
         }
 
     input_text = [m['role'] + ": " + m['content'] for m in messages]
@@ -443,17 +441,12 @@ async def generate_model_output(client: AsyncOpenAI, model_name: str, messages: 
                 max_completion_tokens=adjusted_max_completion_tokens,
                 **kwargs,
             )
+            output.choices[0].message.content = f"<think> {output.choices[0].message.reasoning} </think> {output.choices[0].message.content}"
             break
         except openai.RateLimitError as e:
             logger.warning(f"Rate limit error: {e}")
-        except openai.APIStatusError as e:
-            logger.warning(f"API status error: {e}")
         except openai.APIConnectionError as e:
             logger.warning(f"API connection error: {e}")
-        except openai.APIError as e:
-            logger.warning(f"API error: {e}")
-        except Exception as e:
-            logger.warning(f"Error: {e}")
     return output
 
 class LengthTracker:
@@ -527,8 +520,8 @@ async def run_evaluation(config: MathConfig, data: DataStore = None):
     for round_idx in range(start_round, config.rounds):
         async def ICRL_interaction(problem_idx):
             messages = []
-            messages.append({"role": "user", "content": f"{data.problem_histories[i].problem.problem}\n\n"})
-            sorted_attempts = sorted(data.problem_histories[i].attempts, key=lambda x: x.reward, reverse=True)
+            messages.append({"role": "user", "content": f"{data.problem_histories[problem_idx].problem.problem}\n\n"})
+            sorted_attempts = sorted(data.problem_histories[problem_idx].attempts, key=lambda x: x.reward, reverse=True)
             length_tracker = LengthTracker(config.vllm_context_size, client.encoder, config)
             for attempt in sorted_attempts:
                 message = {"role": "user", "content": f"<Attempt>\n{attempt.model_output}\n**Reward:** {attempt.reward}\n</Attempt>"}
@@ -542,9 +535,9 @@ async def run_evaluation(config: MathConfig, data: DataStore = None):
             output = await generate_model_output(client, config.model_name, messages, config)
             model_output = output.choices[0].message.content
             
-            reward = await reward_model.get_reward_for_answer(model_output, data.problem_histories[i].problem, config)
+            reward = await reward_model.get_reward_for_answer(model_output, data.problem_histories[problem_idx].problem, config)
             
-            data.problem_histories[i].attempts.append(DataStore.Attempt(
+            data.problem_histories[problem_idx].attempts.append(DataStore.Attempt(
                 raw_prompt=messages,
                 model_output=model_output,
                 reward=reward,
@@ -691,7 +684,7 @@ async def main():
     
     data = None
     if config.checkpoint_path:
-        data = DataStore.load_data_snapshot(config, config.checkpoint_path)
+        data = DataStore.load_data_snapshot(config.checkpoint_path, config.debug_run)
     await run_evaluation(config, data)
 
 if __name__ == "__main__":

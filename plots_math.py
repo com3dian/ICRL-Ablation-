@@ -14,6 +14,7 @@ from datetime import datetime
 import uuid
 import pickle
 import re
+from math_bench import DataStore
 plt.style.use(['science', 'no-latex'])
 
 # Increase font size for all elements
@@ -30,20 +31,20 @@ plt.rcParams.update({
 def find_math_file(folder_path):
     """Find the math data file in a given folder."""
     # Look for the most recent round file first
-    pattern = os.path.join(folder_path, "data_round_*_final.json")
+    pattern = os.path.join(folder_path, "data_round_*_final.pkl")
     files = glob.glob(pattern)
     
     if files:
         # Sort by round number to get the latest
         def extract_round_num(filepath):
-            match = re.search(r"data_round_(\d+)_final\.json", os.path.basename(filepath))
+            match = re.search(r"data_round_(\d+)_final\.pkl", os.path.basename(filepath))
             return int(match.group(1)) if match else -1
         
         files.sort(key=extract_round_num, reverse=True)
         return files[0]
     
     # If no round files found, look for initial attempts file
-    initial_file = os.path.join(folder_path, "data_initial_attempts.json")
+    initial_file = os.path.join(folder_path, "data_initial_attempts.pkl")
     if os.path.exists(initial_file):
         return initial_file
     
@@ -54,8 +55,7 @@ def get_sum_df(path):
     data_file = find_math_file(path)
     
     # Load pickle data
-    with open(data_file, "rb") as f:
-        data_store = pickle.load(f)
+    data_store = pickle.load(open(data_file, "rb"))
     
     dict_data = defaultdict(dict)
     
@@ -245,13 +245,20 @@ def plot_cost_reward_sum(*args, **kwargs):
     plt.show()
 
 #%%
-# Example usage (update these paths to your math experiment results):
-# df_icrl = get_sum_df("/path/to/math/icrl/results/")
-# df_reflexion = get_sum_df("/path/to/math/reflexion/results/")
-# df_random = get_sum_df("/path/to/math/random_sampling/results/")
-
-# Plot comparisons:
-# plot_per_step_running_max(df_icrl, df_reflexion, df_random, 
-#                          label_0='ICRL', label_1='Reflexion', label_2='Random Sampling')
-# plot_per_step_gaussian_smoothed(df_icrl, df_reflexion, df_random, param=1,
-#                                label_0='ICRL', label_1='Reflexion', label_2='Random Sampling', save=True)
+df_icrl = get_sum_df("/home/jovyan/shared/amoeini/neurips/ICRL-for-LLM-Agent/ICL/math/icrl/20250726_2302")
+df_icrl_2 = get_sum_df("/home/jovyan/shared/amoeini/neurips/ICRL-for-LLM-Agent/ICL/math/icrl/20250727_1630")
+#%%
+df_icrl_2
+#%%
+data0 = DataStore.load_data_snapshot("/home/jovyan/shared/amoeini/neurips/ICRL-for-LLM-Agent/ICL/math/icrl/20250726_2302")
+data1 = DataStore.load_data_snapshot("/home/jovyan/shared/amoeini/neurips/ICRL-for-LLM-Agent/ICL/math/icrl/20250727_1630")
+# %%
+for i in range(len(data0.problem_histories[2].attempts)):
+    attempt = data1.problem_histories[2].attempts[i]
+    print(attempt.round_idx, attempt.reward, '-'*100)
+    print(attempt.model_output)
+# %%
+for i in range(len(data0.problem_histories[2].attempts)):
+    attempt = data0.problem_histories[2].attempts[i]
+    print(attempt.round_idx, attempt.reward, '-'*100)
+    print(attempt.model_output)
