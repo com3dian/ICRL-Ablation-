@@ -53,19 +53,32 @@ with open(path, 'r') as f:
     output = json.load(f)
     
 best_responses = []
-for question in output[:]:
-    reward_list = []
-    # Process all trials (up to 100)
-    for trial in question[:20]:
-        reward_list.append(float(trial['reward']))
-    idx = np.argmax(reward_list)
+for q_idx, question in enumerate(output[:]):
+    # Get all trials with their rewards
+    trials_with_rewards = []
+    for trial in question[:30]:
+        trials_with_rewards.append((float(trial['reward']), trial))
     
-    try:
-        best_responses.append(question[idx]["generated_text"][9:-10].split('Passage:')[1])
-    except:
-        print("--"*20)
-        print("--"*20)
-        print(question[idx]["generated_text"])
+    # Sort by reward (highest first)
+    trials_with_rewards.sort(key=lambda x: x[0], reverse=True)
+    
+    # Find the best one with correct format
+    found = False
+    for reward, trial in trials_with_rewards:
+        try:
+            generated_text = trial["generated_text"]
+            if 'Passage:' in generated_text:
+                passage = generated_text[9:-10].split('Passage:')[1].strip()
+                best_responses.append(passage)
+                found = True
+                break
+        except:
+            continue
+    
+    if not found:
+        print(f"Warning: No valid format found for question {q_idx}")
+        print(f"Highest reward response: {trials_with_rewards[0][1]['generated_text'][:200]}...")
+        # For now, skip this question by not adding anything to best_responses
 
 
 # ---------------------------------------------------------------------
@@ -73,7 +86,11 @@ for question in output[:]:
 # ---------------------------------------------------------------------
 entries = []
 
-for idx in tqdm(range(100)):
+# Only process as many entries as we have valid responses
+num_valid_responses = len(best_responses)
+print(f"\nFound {num_valid_responses} valid responses out of 100 questions")
+
+for idx in tqdm(range(num_valid_responses)):
     instruction = task.get_input(idx).strip()
     cot_instruction = cot_prompt.format(input=instruction)[:-125]
 
