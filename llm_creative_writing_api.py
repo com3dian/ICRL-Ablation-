@@ -8,6 +8,7 @@ import sys
 import numpy as np
 import torch
 import argparse
+import random
 
 from transformers import AutoTokenizer
 from vllm import LLM, SamplingParams
@@ -32,6 +33,7 @@ no_ICRL = 0
 
 no_reward = 0
 zero_reward = 0
+random_reward = 1  # New ablation: use random rewards from 1-10
 
 exploration_or_exploitation = 0
 num_weak_demo = 3000
@@ -200,7 +202,7 @@ def evaluate_checkpoint(
         
         eval_prompt_list = []
         
-        if round_idx != 0:
+        if round_idx != 0 and not random_reward:
         
             for i, output_obj in enumerate(api_outputs):
                 # Retrieve generated text.
@@ -283,27 +285,36 @@ def evaluate_checkpoint(
             
 
             if round_idx != 0:
+                if random_reward:
+                    # Generate random reward between 1 and 10
+                    reward_value = random.randint(1, 10)
+                    reward_str = str(reward_value)
+                    eval_result = f"Random reward: {reward_value}"
+                    print("[]"*20, "\n Random reward generated")
+                    print("--"*10)
+                    print("reward_str", reward_str)
+                    print('reward_value', reward_value)
+                else:
+                    eval_result = eval_result_list[i]
 
-                eval_result = eval_result_list[i]
-
-                # _RATING_RE = re.compile(r"Humor rating:\s*(10|[1-9])\b")
-                RATING_RE = re.compile(r"Coherency score:\s*(10|[1-9])\b")
-                # RATING_RE = re.compile(r"Originality score:\s*(10|[1-9])\b")
+                    # _RATING_RE = re.compile(r"Humor rating:\s*(10|[1-9])\b")
+                    RATING_RE = re.compile(r"Coherency score:\s*(10|[1-9])\b")
+                    # RATING_RE = re.compile(r"Originality score:\s*(10|[1-9])\b")
 
 
-                def get_humor_rating(text):
-                    """Return the humor rating or None if the pattern isn't present."""
-                    m = _RATING_RE.search(text)
-                    return int(m.group(1)) if m else None
-                reward_str = get_humor_rating(eval_result)
-                try:
-                    reward_value = int(reward_str)
-                except:
-                    reward_value = 0
-                print("[]"*20, "\n eval_result", eval_result)
-                print("--"*10)
-                print("reward_str", reward_str)
-                print('reward_value', reward_value)
+                    def get_humor_rating(text):
+                        """Return the humor rating or None if the pattern isn't present."""
+                        m = _RATING_RE.search(text)
+                        return int(m.group(1)) if m else None
+                    reward_str = get_humor_rating(eval_result)
+                    try:
+                        reward_value = int(reward_str)
+                    except:
+                        reward_value = 0
+                    print("[]"*20, "\n eval_result", eval_result)
+                    print("--"*10)
+                    print("reward_str", reward_str)
+                    print('reward_value', reward_value)
             else:
 
                 reward_str = str(1.00)
@@ -315,7 +326,10 @@ def evaluate_checkpoint(
                 eval_result = ""
                 eval_prompt_i = ""
             else:
-                eval_prompt_i = eval_prompt_list[i]
+                if random_reward:
+                    eval_prompt_i = ""
+                else:
+                    eval_prompt_i = eval_prompt_list[i]
             # Create a weak demo dictionary.
             weak_demo = {
                 "prompt": samples[i]["question"],
@@ -364,6 +378,8 @@ def evaluate_checkpoint(
             this_time_change = ""
             if rejection_sampling:
                 this_time_change += "best_of_n_"
+            elif random_reward:
+                this_time_change += "random_reward_"
             else:
                 this_time_change += "ICRL_"
             this_time_change += "new_eval_prompt"

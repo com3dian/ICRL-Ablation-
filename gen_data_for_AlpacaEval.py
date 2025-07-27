@@ -39,6 +39,7 @@ print(f"Loaded {len(task)} creative-writing instructions.\n")
 
 method = "self-refine"
 method = "ICRL"
+method = "diff-prompts"
 
 # load responses for self-refine
 # path = "/sfs/weka/scratch/ks8vf/ICL/creative_writing_api/Qwen/Qwen3-32B/self_refine_seperate_run_evalnum_100_n_100/output_list.json"
@@ -48,7 +49,9 @@ if method == "ICRL":
     path = "/sfs/weka/scratch/ks8vf/code_submission/ICL/creative_writing_api/Qwen/Qwen3-32B/ICRL_new_eval_prompt_evalnum_100_n_100/output_list.json"
 elif method == "self-refine":
     path = "/sfs/weka/scratch/ks8vf/ICL/creative_writing_api/Qwen/Qwen3-32B/self_refine_seperate_run_evalnum_100_n_100/output_list.json"
-
+elif method == "diff-prompts":
+    path = "/sfs/weka/scratch/ks8vf/code_submission/ICL/creative_writing_api/Qwen/Qwen3-32B/ICRL_different_prompts_evalnum_100_n_100/output_list.json"
+    
 with open(path, 'r') as f:
     output = json.load(f)
     
