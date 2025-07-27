@@ -53,13 +53,13 @@ else:
     client = OpenAI(api_key="Your_API_Key")
 
 if meta_instruction_change: 
-    exploitation_instruction = "Meta Prompt: surpass the highest reward observed so far. Review the trials, then output your candidate inside `<response>…</response>`."
-    exploration_instruction = "Meta Prompt: Review every <trial> (response + reward). Reply with a new, non‑repeating answer wrapped in `<response>…</response>` tags"
+    exploitation_instruction = "Meta Prompt: surpass the highest score observed so far. Review the trials, then output your candidate inside `<response>…</response>`."
+    exploration_instruction = "Meta Prompt: Review every <trial> (response + score). Reply with a new, non‑repeating answer wrapped in `<response>…</response>` tags"
 else: 
-    exploration_instruction = "Instruction: Examine all the `<trial>…</trial>` examples, each showing a candidate Response and its Reward. Provide a response that is different from previous trials demonstrated in the context, and wrap it in `<response>…</response>`."
-    exploitation_instruction = "Instruction: You will be given multiple <trial>…</trial> entries. Each entry contains a candidate Response and its Reward. Your task: Based on the previous trials, try your best to produce a response that can achieve a higher reward, while making sure it correctly follows the task instruction, and put it in `<response>…</response>` format."
+    exploration_instruction = "Instruction: Examine all the `<trial>…</trial>` examples, each showing a candidate Response and its Score. Provide a response that is different from previous trials demonstrated in the context, and wrap it in `<response>…</response>`."
+    exploitation_instruction = "Instruction: You will be given multiple <trial>…</trial> entries. Each entry contains a candidate Response and its Score. Your task: Based on the previous trials, try your best to produce a response that can achieve a higher score, while making sure it correctly follows the task instruction, and put it in `<response>…</response>` format."
 
-explore_or_exploit_instruction = "Instruction: Examine all the `<trial>…</trial>` examples, each showing a candidate Response and its Reward. You have two options, exploration or exploitation. For exploration, provide a response that is different from previous trials demonstrated in the context, and wrap it in `<response>…</response>`. For exploitation, make the best educated guess based on the high reward trials to produce response that can achieve a higher reward, while making sure it correctly follows the task instruction, and put it in `<response>…</response>` format. Pick one option to follow."
+explore_or_exploit_instruction = "Instruction: Examine all the `<trial>…</trial>` examples, each showing a candidate Response and its Score. You have two options, exploration or exploitation. For exploration, provide a response that is different from previous trials demonstrated in the context, and wrap it in `<response>…</response>`. For exploitation, make the best educated guess based on the high score trials to produce response that can achieve a higher score, while making sure it correctly follows the task instruction, and put it in `<response>…</response>` format. Pick one option to follow."
 
 
 # Load prompts directly to avoid import issues
@@ -160,15 +160,15 @@ def evaluate_checkpoint(
                     prompt += f"**Task Query**: {weak_demo['prompt']}\n"
                     if not no_reward: 
                         if zero_reward:
-                            prompt += f"**Reward**: {0.00}\n"
+                            prompt += f"**Score**: {0.00}\n"
                         else:
-                            prompt += f"**Reward**: {weak_demo['reward']}\n"
+                            prompt += f"**Score**: {weak_demo['reward']}\n"
                     prompt += weak_demo['answer'][:-28] + "\n"
                     if not no_reward: 
                         if zero_reward:
-                            prompt += f"**Reward**: {0.00}\n"
+                            prompt += f"**Score**: {0.00}\n"
                         else:
-                            prompt += f"**Reward**: {weak_demo['reward']}\n"
+                            prompt += f"**Score**: {weak_demo['reward']}\n"
                     prompt += "</trial>"
                 if ICRL: 
                     if round_idx % 2 == 0:
@@ -371,7 +371,7 @@ def evaluate_checkpoint(
                 this_time_change += "best_of_n_"
             else:
                 this_time_change += "ICRL_"
-            this_time_change += "new_eval_prompt"
+            this_time_change += "different_prompts"
 
             this_time_change += f"_evalnum_{max_eval_samples}"
             run = f"{this_time_change}_n_{n}"
