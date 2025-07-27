@@ -208,9 +208,9 @@ def parse_args():
         # config.num_problems = 1
         config.rounds = 10
         # config.num_initial_attempts = 1
-        logger.debug(colorama.Fore.RED + "*"*100)
-        logger.debug("Debug run")
-        logger.debug("*"*100 + colorama.Fore.RESET)
+        logger.info("*"*100)
+        logger.info("Debug run")
+        logger.info("*"*100)
         
     if config.icrl_mode == Methods.RANDOM_SAMPLING:
         config.num_initial_attempts = 0
@@ -329,7 +329,7 @@ def extract_answer(output):
     if match:
         return match.group(1)
     else:
-        # logger.warning(f"{colorama.Fore.YELLOW}No answer found in {colorama.Fore.RESET} {output}")
+        # logger.warning(f"No answer found in {output}")
         return 0
 
 class RewardModel:
@@ -379,11 +379,11 @@ class RewardModel:
                 )
             except openai.BadRequestError as e:
                 import pprint
-                print(colorama.Fore.YELLOW + "length of input tokens" + colorama.Fore.RESET, len(input_tokens))
-                print(colorama.Fore.YELLOW + "messages" + colorama.Fore.RESET)
-                pprint.pprint(messages)
-                print(colorama.Fore.YELLOW + "model_output" + colorama.Fore.RESET)
-                pprint.pprint(model_output)
+                logger.warning(f"length of input tokens: {len(input_tokens)}")
+                logger.warning("messages:")
+                logger.warning(str(messages))
+                logger.warning("model_output:")
+                logger.warning(str(model_output))
                 raise e
 
             reward_answer = reward_output.choices[0].message.content
@@ -393,7 +393,7 @@ class RewardModel:
                 return 1 - np.exp(reward_output.choices[0].logprobs.content[0].logprob)
             else:
                 logger.warning(
-                    f"{colorama.Fore.YELLOW}Invalid reward answer:{colorama.Fore.RESET} {reward_answer} \n for problem {problem_instance['problem']} \n model output: {model_output}")
+                    f"Invalid reward answer: {reward_answer} \n for problem {problem_instance['problem']} \n model output: {model_output}")
                 return 0
 
 def merge_same_role_messages(messages):
@@ -406,17 +406,23 @@ def merge_same_role_messages(messages):
     return merged_messages
 
 def get_clinet(base_url, model_name):
-    client = AsyncOpenAI(base_url=base_url)
+    api_key = os.getenv("OPENROUTER_API_KEY") if 'openrouter' in base_url else None
+    client = AsyncOpenAI(base_url=base_url, api_key=api_key)
     client.encoder = AutoTokenizer.from_pretrained(model_name)
     return client
     
 
 async def generate_model_output(client: AsyncOpenAI, model_name: str, messages: list[dict], config: MathConfig, **kwargs):
+    kwargs["extra_body"] = kwargs.get("extra_body", {})
     if config.disable_reasoning:
-        kwargs["extra_body"] = {
+        kwargs["extra_body"]["chat_template_kwargs"] = {
             "chat_template_kwargs": {
                 "enable_reasoning": False,
             },
+        }
+    if 'openrouter' in client.base_url:
+        kwargs["extra_body"]["provider"] = {
+            "only": "chutes"
         }
 
     input_text = [m['role'] + ": " + m['content'] for m in messages]
@@ -428,13 +434,26 @@ async def generate_model_output(client: AsyncOpenAI, model_name: str, messages: 
     )
     assert adjusted_max_completion_tokens > 0, "adjusted_max_completion_tokens is not positive"
 
-    output = await client.chat.completions.create(
-        model=model_name,
-        messages=messages,
-        temperature=config.temperature,
-        max_completion_tokens=adjusted_max_completion_tokens,
-        **kwargs,
-    )
+    while True:
+        try:
+            output = await client.chat.completions.create(
+                model=model_name,
+                messages=messages,
+                temperature=config.temperature,
+                max_completion_tokens=adjusted_max_completion_tokens,
+                **kwargs,
+            )
+            break
+        except openai.RateLimitError as e:
+            logger.warning(f"Rate limit error: {e}")
+        except openai.APIStatusError as e:
+            logger.warning(f"API status error: {e}")
+        except openai.APIConnectionError as e:
+            logger.warning(f"API connection error: {e}")
+        except openai.APIError as e:
+            logger.warning(f"API error: {e}")
+        except Exception as e:
+            logger.warning(f"Error: {e}")
     return output
 
 class LengthTracker:
@@ -485,6 +504,9 @@ async def run_evaluation(config: MathConfig, data: DataStore = None):
                 round_idx=-1,
             )
             data.problem_histories[problem_idx].attempts.append(attempt)
+            
+            if problem_idx == 0:
+                logger.info(f"\n\nInitial attempt: {model_output}\n\n")
     
     async with anyio.create_task_group() as tg:
         for i in range(len(data.problem_histories)):
@@ -494,8 +516,8 @@ async def run_evaluation(config: MathConfig, data: DataStore = None):
     
     rewards = []
     for i in range(len(data.problem_histories)):
-        rewards.extend([attempt.reward for attempt in data.problem_histories[i].attempts])
-    print(np.percentile(rewards, 25), np.percentile(rewards, 50), np.percentile(rewards, 75))
+        rewards.extend([attempt.reward for attempt in data.problem_histories[i].attempts if attempt.round_idx == -1])
+    logger.info(f"Initial rewards - 25th: {np.percentile(rewards, 25):.3f}, 50th: {np.percentile(rewards, 50):.3f}, 75th: {np.percentile(rewards, 75):.3f}")
     
     start_round = 0
     for i in range(len(data.problem_histories)):
@@ -503,7 +525,7 @@ async def run_evaluation(config: MathConfig, data: DataStore = None):
             start_round = max(start_round, data.problem_histories[i].attempts[-1].round_idx + 1)
     
     for round_idx in range(start_round, config.rounds):
-        async def ICRL_interaction(i):
+        async def ICRL_interaction(problem_idx):
             messages = []
             messages.append({"role": "user", "content": f"{data.problem_histories[i].problem.problem}\n\n"})
             sorted_attempts = sorted(data.problem_histories[i].attempts, key=lambda x: x.reward, reverse=True)
@@ -529,10 +551,13 @@ async def run_evaluation(config: MathConfig, data: DataStore = None):
                 round_idx=round_idx,
             ))
 
-        async def reflexion_interaction(question_idx):
+            if problem_idx == 0:
+                logger.info(f"\n\nRound {round_idx} attempt: {model_output}\n\n")
+
+        async def reflexion_interaction(problem_idx):
             messages = []
-            messages.append({"role": "user", "content": f"{data.problem_histories[question_idx].problem.problem}\n\n"})
-            for attempt in data.problem_histories[question_idx].attempts:
+            messages.append({"role": "user", "content": f"{data.problem_histories[problem_idx].problem.problem}\n\n"})
+            for attempt in data.problem_histories[problem_idx].attempts:
                 messages.append({"role": "user", "content": f"<Reflection>\n{attempt.extra_fields['reflection']}\n**Reward:** {attempt.reward}\n</Reflection>"})
             instruction = config.use_reflexion_instruction if not config.selfrefine else config.use_selfrefine_instruction
             messages.append({"role": "user", "content": f"\n\n{instruction}"})
@@ -541,7 +566,7 @@ async def run_evaluation(config: MathConfig, data: DataStore = None):
             output = await generate_model_output(client, config.model_name, messages, config)
             model_output = output.choices[0].message.content
             
-            reward = await reward_model.get_reward_for_answer(model_output, data.problem_histories[question_idx].problem, config)
+            reward = await reward_model.get_reward_for_answer(model_output, data.problem_histories[problem_idx].problem, config)
             
             current_attempt = DataStore.Attempt(
                 raw_prompt=copy.deepcopy(messages),
@@ -549,7 +574,10 @@ async def run_evaluation(config: MathConfig, data: DataStore = None):
                 reward=reward,
                 round_idx=round_idx,
             )
-            data.problem_histories[question_idx].attempts.append(current_attempt)
+            data.problem_histories[problem_idx].attempts.append(current_attempt)
+
+            if problem_idx == 0:
+                logger.info(f"\n\nRound {round_idx} reflection: {model_output}\n\n")
 
             # reflection
             messages.append({"role": "assistant", "content": f"{model_output}\n**Reward:** {reward}\n"})
@@ -590,11 +618,11 @@ async def run_evaluation(config: MathConfig, data: DataStore = None):
             ),
         )
         
-        # print the 25 50 75 percentile of the rewards
+        # Log the 25 50 75 percentile of the rewards
         rewards = []
         for i in range(len(data.problem_histories)):
-            rewards.extend([attempt.reward for attempt in data.problem_histories[i].attempts])
-        print('Round', round_idx, np.percentile(rewards, 25), np.percentile(rewards, 50), np.percentile(rewards, 75))
+            rewards.extend([attempt.reward for attempt in data.problem_histories[i].attempts if attempt.round_idx == round_idx])
+        logger.info(f"Round {round_idx} rewards - 25th: {np.percentile(rewards, 25):.3f}, 50th: {np.percentile(rewards, 50):.3f}, 75th: {np.percentile(rewards, 75):.3f}")
         
 
 def find_math_file(folder_path):
@@ -619,19 +647,48 @@ def find_math_file(folder_path):
     
     raise FileNotFoundError(f"No math data file found in {folder_path}")
 
+class ColoredFormatter(logging.Formatter):
+    """Custom formatter that adds colors to log levels"""
+    
+    def format(self, record):
+        # Apply color based on log level
+        if record.levelno == logging.INFO:
+            record.msg = f"{colorama.Fore.GREEN}{record.msg}{colorama.Fore.RESET}"
+        elif record.levelno == logging.WARNING:
+            record.msg = f"{colorama.Fore.YELLOW}{record.msg}{colorama.Fore.RESET}"
+        elif record.levelno == logging.ERROR:
+            record.msg = f"{colorama.Fore.RED}{record.msg}{colorama.Fore.RESET}"
+        elif record.levelno == logging.CRITICAL:
+            record.msg = f"{colorama.Fore.RED}{colorama.Style.BRIGHT}{record.msg}{colorama.Style.RESET_ALL}"
+        
+        return super().format(record)
+
 async def main():
-    # Configure logging
-    logging.basicConfig(
-        level=logging.WARNING,
-        format='%(message)s',
-        handlers=[
-            logging.StreamHandler(),
-        ]
-    )
-    logger.setLevel(logging.INFO)
+    # Initialize colorama
+    colorama.init()
     
     # Parse command line arguments and get a config object
     config = parse_args()
+    
+    # Configure logging with custom formatter
+    handler = logging.StreamHandler()
+    handler.setFormatter(ColoredFormatter('%(message)s'))
+    
+    # Add file logging
+    log_file = Path(config.output_path) / "output.log"
+    file_handler = logging.FileHandler(log_file, mode='w')
+    file_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
+    
+    logging.basicConfig(
+        level=logging.INFO,
+        handlers=[handler, file_handler]
+    )
+    logger.setLevel(logging.INFO)
+    
+    # Suppress INFO logs from openai module
+    logging.getLogger("openai").setLevel(logging.WARNING)
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    
     data = None
     if config.checkpoint_path:
         data = DataStore.load_data_snapshot(config, config.checkpoint_path)
