@@ -81,18 +81,21 @@ class MathConfig:
     dataset_name: str = "MathArena/aime_2025"
     split_name: str = "train"
     num_initial_attempts: int = 2
-    num_problems: int = 10 # -1 means all problems
+    num_problems: int = -1 # -1 means all problems
     rounds: int = 40
     
     # Model configuration
     model_name: str = "Qwen/Qwen3-32B"
-    vllm_address: str = "http://localhost:11435/v1"
+    # vllm_address: str = "http://localhost:11435/v1"
+    vllm_address: str = "https://openrouter.ai/api/v1"
+    vllm_context_size: int = 32768
     score_model_name: str = "virtuoussy/Qwen2.5-7B-Instruct-RLVR"
     score_vllm_address: str = "http://localhost:11436/v1"
-    score_vllm_context_size: int = 2048
+    score_vllm_context_size: int = 4096
     disable_reasoning: bool = True
     temperature: float = 1.0  
     max_completion_tokens: int = 4096
+    context_size_safety_margin: int = 75
 
     checkpoint_path: Optional[str] = None
     
@@ -331,10 +334,9 @@ def extract_answer(output):
 
 class RewardModel:
     def __init__(self, config: MathConfig):
-        self.score_client = AsyncOpenAI(base_url=config.score_vllm_address)
+        self.score_client = get_clinet(config.score_vllm_address, config.score_model_name)
         if config.debug_run:
             mock_reward_client(self.score_client)
-        self.encoding = AutoTokenizer.from_pretrained(config.score_model_name)
 
     async def get_reward_for_answer(self, model_output, problem_instance: DataStore.Problem, config: MathConfig):
         reference = problem_instance.answer
@@ -353,11 +355,10 @@ class RewardModel:
                 ),
             }]
             
-            input_tokens = self.encoding.encode(messages[0]['content'])
+            input_tokens = self.score_client.encoder.encode(messages[0]['content'])
             diff = config.score_vllm_context_size - len(input_tokens)
-            safe_dist = 50
-            if diff < safe_dist:
-                truncated_model_output = self.encoding.decode(self.encoding.encode(model_output)[-diff + safe_dist:])
+            if diff < config.context_size_safety_margin:
+                truncated_model_output = self.score_client.encoder.decode(self.score_client.encoder.encode(model_output)[-diff + config.context_size_safety_margin:])
                 messages = [{
                     "role": "user",
                     "content": config.reward_model_instruction.format(
@@ -369,11 +370,10 @@ class RewardModel:
 
 
             try:
-                reward_output = await generate_model_output(
-                    self.score_client,
-                    config.score_model_name,
-                    messages,
-                    config,
+                reward_output = await self.score_client.chat.completions.create(
+                    model=config.score_model_name,
+                    messages=messages,
+                    temperature=config.temperature,
                     logprobs=True,
                     max_completion_tokens=10,
                 )
@@ -405,6 +405,12 @@ def merge_same_role_messages(messages):
             merged_messages.append(message)
     return merged_messages
 
+def get_clinet(base_url, model_name):
+    client = AsyncOpenAI(base_url=base_url)
+    client.encoder = AutoTokenizer.from_pretrained(model_name)
+    return client
+    
+
 async def generate_model_output(client: AsyncOpenAI, model_name: str, messages: list[dict], config: MathConfig, **kwargs):
     if config.disable_reasoning:
         kwargs["extra_body"] = {
@@ -412,18 +418,40 @@ async def generate_model_output(client: AsyncOpenAI, model_name: str, messages: 
                 "enable_reasoning": False,
             },
         }
-    default_kwargs = {
-        "max_completion_tokens": config.max_completion_tokens,
-    }
-    kwargs = {**default_kwargs, **kwargs}
+
+    input_text = [m['role'] + ": " + m['content'] for m in messages]
+    input_text = "\n".join(input_text)
+    num_input_tokens = len(client.encoder.encode(input_text))
+    adjusted_max_completion_tokens = min(
+        config.max_completion_tokens,
+        config.vllm_context_size - num_input_tokens - config.context_size_safety_margin,
+    )
+    assert adjusted_max_completion_tokens > 0, "adjusted_max_completion_tokens is not positive"
 
     output = await client.chat.completions.create(
         model=model_name,
         messages=messages,
         temperature=config.temperature,
+        max_completion_tokens=adjusted_max_completion_tokens,
         **kwargs,
     )
     return output
+
+class LengthTracker:
+    def __init__(self, length_limit: int, encoder: AutoTokenizer, config: MathConfig):
+        self.length_limit = length_limit - config.context_size_safety_margin
+        self.current_length = 0
+        self.encoder = encoder
+    
+    def can_i_add_this_message(self, message: dict):
+        new_text = message['role'] + ": " + message['content']
+        new_tokens = len(self.encoder.encode(new_text))
+        if self.current_length + new_tokens > self.length_limit:
+            return False
+        self.current_length += new_tokens
+        return True
+
+    
 
 async def run_evaluation(config: MathConfig, data: DataStore = None):
     """
@@ -434,7 +462,7 @@ async def run_evaluation(config: MathConfig, data: DataStore = None):
         data = DataStore()
         data.init_problems(config)
     
-    client = AsyncOpenAI(base_url=config.vllm_address)
+    client = get_clinet(config.vllm_address, config.model_name)
     if config.debug_run:
         mock_client(client)
     reward_model = RewardModel(config)
@@ -478,8 +506,13 @@ async def run_evaluation(config: MathConfig, data: DataStore = None):
         async def ICRL_interaction(i):
             messages = []
             messages.append({"role": "user", "content": f"{data.problem_histories[i].problem.problem}\n\n"})
-            for attempt in data.problem_histories[i].attempts:
-                messages.append({"role": "user", "content": f"<Attempt>\n{attempt.model_output}\n**Reward:** {attempt.reward}\n</Attempt>"})
+            sorted_attempts = sorted(data.problem_histories[i].attempts, key=lambda x: x.reward, reverse=True)
+            length_tracker = LengthTracker(config.vllm_context_size, client.encoder, config)
+            for attempt in sorted_attempts:
+                message = {"role": "user", "content": f"<Attempt>\n{attempt.model_output}\n**Reward:** {attempt.reward}\n</Attempt>"}
+                if not length_tracker.can_i_add_this_message(message):
+                    break
+                messages.append(message)
             instruction = config.exploration_instruction if round_idx % 2 == 0 else config.exploitation_instruction
             messages.append({"role": "user", "content": f"\n\n{instruction}"})
             messages = merge_same_role_messages(messages)
