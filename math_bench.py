@@ -415,9 +415,7 @@ def get_clinet(base_url, model_name):
 async def generate_model_output(client: AsyncOpenAI, model_name: str, messages: list[dict], config: MathConfig, **kwargs):
     kwargs["extra_body"] = kwargs.get("extra_body", {})
     if config.disable_reasoning:
-        kwargs["extra_body"]["chat_template_kwargs"] = {
-            "enable_reasoning": False,
-        }
+        messages.insert(0, {"role": "system", "content": "/no_think"})
     if 'openrouter' in str(client.base_url):
         kwargs["extra_body"]["provider"] = {
             "only": ["chutes"]
@@ -441,7 +439,7 @@ async def generate_model_output(client: AsyncOpenAI, model_name: str, messages: 
                 max_completion_tokens=adjusted_max_completion_tokens,
                 **kwargs,
             )
-            output.choices[0].message.content = f"<think> {output.choices[0].message.reasoning} </think> {output.choices[0].message.content}"
+            assert len(output.choices[0].message.content) > 0, "Output is empty"
             break
         except openai.RateLimitError as e:
             logger.warning(f"Rate limit error: {e}")
@@ -501,7 +499,7 @@ async def run_evaluation(config: MathConfig, data: DataStore = None):
             data.problem_histories[problem_idx].attempts.append(attempt)
             
             if problem_idx == 0:
-                logger.info(f"\n\nInitial attempt: {model_output}\n\n")
+                logger.info(f"\n{'-'*100}\nInitial attempt: {model_output}\n{'-'*100}\n")
     
     async with anyio.create_task_group() as tg:
         for i in range(len(data.problem_histories)):
@@ -547,7 +545,7 @@ async def run_evaluation(config: MathConfig, data: DataStore = None):
             ))
 
             if problem_idx == 0:
-                logger.info(f"\n\nRound {round_idx} attempt: {model_output}\n\n")
+                logger.info(f"\n{'-'*100}\nRound {round_idx} attempt: {model_output}\n{'-'*100}\n")
 
         async def reflexion_interaction(problem_idx):
             messages = []
@@ -572,7 +570,7 @@ async def run_evaluation(config: MathConfig, data: DataStore = None):
             data.problem_histories[problem_idx].attempts.append(current_attempt)
 
             if problem_idx == 0:
-                logger.info(f"\n\nRound {round_idx} reflection: {model_output}\n\n")
+                logger.info(f"\n{'-'*100}\nRound {round_idx} reflection: {model_output}\n{'-'*100}\n")
 
             # reflection
             messages.append({"role": "assistant", "content": f"{model_output}\n**Reward:** {reward}\n"})
