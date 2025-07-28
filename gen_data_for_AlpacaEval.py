@@ -40,6 +40,9 @@ print(f"Loaded {len(task)} creative-writing instructions.\n")
 method = "self-refine"
 method = "ICRL"
 method = "diff-prompts"
+method = "random-rewards"
+method = "reflexion"
+method = "parallel-scaling"
 
 # load responses for self-refine
 # path = "/sfs/weka/scratch/ks8vf/ICL/creative_writing_api/Qwen/Qwen3-32B/self_refine_seperate_run_evalnum_100_n_100/output_list.json"
@@ -51,6 +54,12 @@ elif method == "self-refine":
     path = "/sfs/weka/scratch/ks8vf/ICL/creative_writing_api/Qwen/Qwen3-32B/self_refine_seperate_run_evalnum_100_n_100/output_list.json"
 elif method == "diff-prompts":
     path = "/sfs/weka/scratch/ks8vf/code_submission/ICL/creative_writing_api/Qwen/Qwen3-32B/ICRL_different_prompts_evalnum_100_n_100/output_list.json"
+elif method == "random-rewards": 
+    path = "/sfs/weka/scratch/ks8vf/code_submission/ICL/creative_writing_api/Qwen/Qwen3-32B/random_reward_new_eval_prompt_evalnum_100_n_100/output_list.json"
+elif method == "reflexion": 
+    path = "/sfs/weka/scratch/ks8vf/code_submission/ICL/creative_writing_api/Qwen/Qwen3-32B/reflexion_new_eval_prompt_evalnum_100_n_100/output_list.json"
+elif method == "parallel-scaling":
+    path = "/sfs/weka/scratch/ks8vf/code_submission/ICL/creative_writing_api/Qwen/Qwen3-32B/ICRL_parallel_scaling_evalnum_100_parallel_5_n_100/output_list.json"
     
 with open(path, 'r') as f:
     output = json.load(f)

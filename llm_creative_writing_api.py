@@ -33,7 +33,7 @@ no_ICRL = 0
 
 no_reward = 0
 zero_reward = 0
-random_reward = 1  # New ablation: use random rewards from 1-10
+random_reward = 0  # New ablation: use random rewards from 1-10
 
 exploration_or_exploitation = 0
 num_weak_demo = 3000
