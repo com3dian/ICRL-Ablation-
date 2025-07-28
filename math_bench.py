@@ -65,17 +65,17 @@ class MathConfig:
     icrl_mode: Methods = Methods.ICRL
     debug_run: bool = False
     max_attempts_in_context: Optional[int] = None # Ablation
-    zero_out_rewards: bool = False # Ablation
-    no_rewards: bool = False # Ablation
-    explore_only: bool = False # Ablation
-    exploit_only: bool = False # Ablation
+    # zero_out_rewards: bool = False # Ablation
+    # no_rewards: bool = False # Ablation
+    # explore_only: bool = False # Ablation
+    # exploit_only: bool = False # Ablation
     explore_and_exploit: bool = False # Ablation
     neutral_prompt: bool = False # Ablation
-    max_reflections_in_context: Optional[int] = None
+    # max_reflections_in_context: Optional[int] = None 
     react: bool = False
     selfrefine: bool = False
-    cot: bool = False
-    high_reward_only: bool = False
+    # cot: bool = False
+    # high_reward_only: bool = False
 
     # Experiment parameters
     dataset_name: str = "MathArena/aime_2025"
@@ -96,6 +96,7 @@ class MathConfig:
     temperature: float = 1.0  
     max_completion_tokens: int = 4096
     context_size_safety_margin: int = 75
+    max_attempt_length: int = 2000
 
     checkpoint_path: Optional[str] = None
     
@@ -113,50 +114,61 @@ Write your final answer in the format of <answer>...</answer>.
 
     explore_and_exploit_instruction: str = """
 You get multiple attempts to complete the task. You can see the previous attempts and their rewards.
-For this attempt, decide whether to try a completely different approach or to learn and improve on the previous attempts. Then, continue to answer the question.
+For this attempt, decide whether to try a completely different approach or to learn from and improve on the previous attempts. Then, continue to answer the question.
 Write your final answer in the format of <answer>...</answer>.
 """
 
+    neutral_round_instruction: str = """
+Try to correctly answer the math problem presented to you.
+Write your final answer in the format of <answer>...</answer>.
+"""
+
+    cot_instruction: str = """
+Before giving your final answer, carefully reason step-by-step:
+1. Understand and restate clearly what the math problem is asking.
+2. Identify the mathematical concepts or formulas needed to solve the problem.
+3. Plan the precise steps required to arrive at the correct solution.
+4. Verify your solution for accuracy and logical consistency.
+
+Then, clearly present your final solution in the format of <answer>...</answer>.
+"""
+
     do_reflexion_instruction: str = """
-"You will be given the history of a past experience in which you encountered a task that required you to provide a response to a prompt aiming to maximize a reward, and you attempted a response. You were unsuccessful in providing an answer that successfully completed the task. Instead of recounting the details of the task itself, focus on analyzing the approach you took and the specific actions or steps you attempted. Based on this reflection, devise a concise, revised plan of action that acknowledges your error and details the exact measures or methods you should have employed. For example, if you attempted steps A and B but overlooked step C, construct a plan that explicitly incorporates step C into your approach. This self-reflection and plan will be essential for when you reattempt the task.
+Review your previous unsuccessful attempt at this math problem. Instead of repeating the solution process, critically analyze:
+1. Exactly where you made errors or incorrect assumptions.
+2. Which mathematical concepts or steps you misunderstood or misapplied.
+3. How these errors impacted your final answer.
+
+After reflection, write a concise, improved solution strategy that explicitly addresses these issues, ensuring you correctly apply the needed concepts and steps in the future.
 """
 
     use_reflexion_instruction: str = """
-Your location and the environment is reset now. It's your turn.
-Consider the previous reflections about doing the task and try to complete the task.
-After thinking, make sure to write your action **exactly** in the "Action: single_action" format. **You can only do one action at a time.**
+Consider your reflections on past mistakes for this math problem. Apply those insights now to solve the problem accurately.
+Write your corrected final answer in the format of <answer>...</answer>.
 """
 
     do_selfrefine_instruction: str = """
-Review your completed attempt for this scientific task. Now, provide detailed feedback on what went wrong:
-1. Identify any specific errors or misunderstandings in your approach
-2. Analyze which actions were ineffective and why they failed
-3. Determine what key steps or objects you missed or used incorrectly
+Review your completed solution to this math problem. Provide detailed feedback clearly enclosed within <feedback>...</feedback> tags:
+1. Identify precisely which steps or calculations were incorrect.
+2. Analyze why each incorrect step or calculation failed.
+3. Specify the exact mathematical concepts, rules, or formulas that should have been applied differently.
 
-Put your feedback within <feedback>...</feedback> tags.
-
-Then, briefly outline an improved approach that would address these issues for a future attempt. What would you do differently to successfully complete the task?
+Then, briefly outline a refined and correct approach that you would follow next time to avoid these mistakes.
 """
 
     use_selfrefine_instruction: str = """
-Your location and the environment is reset now. It's your turn.
+Consider the detailed feedback from your previous solution attempts on this math problem. Use this feedback explicitly to guide your current attempt:
+1. Correctly apply the identified mathematical concepts and formulas.
+2. Carefully avoid repeating previously made calculation errors.
+3. Clearly follow the refined approach outlined earlier.
 
-Consider the feedback provided on previous attempts for this scientific task. Apply the insights from this feedback to improve your approach. Pay special attention to:
-1. Correcting the specific errors identified in previous attempts
-2. Using more effective actions in the right sequence
-3. Focusing on key objects and steps that were missed before
-
-Develop a clear plan that addresses the issues highlighted in the feedback and follows the task instructions correctly.
-
-After thinking through your approach, write your action **exactly** in the "Action: single_action" format. You can only do one action at a time.
+Write your improved final answer in the format of <answer>...</answer>.
 """
 
     react_instruction: str = """
-Your location and the environment is reset now. It's your turn.
+Think through each step of the math problem-solving process carefully before finalizing your answer. Clearly outline your reasoning internally within `<thought>...</thought>` tags.
 
-Before each action, think through your process step by step. Enclose your reasoning within `<thought>...</thought>` tags so that only you can see it.
-
-After thinking, make sure to write your action **exactly** in the "Action: single_action" format. **You can only do one action at a time.**
+After careful reasoning, present your final answer in the format of <answer>...</answer>.
 """
 
     reward_model_instruction: str = """
@@ -225,10 +237,6 @@ def parse_args():
         config.num_initial_attempts = 0
         config.selfrefine = True
         config.no_rewards = True
-    elif config.icrl_mode == Methods.COT:
-        config.num_initial_attempts = 0
-        config.max_attempts_in_context = 0
-        config.cot = True
 
     postfix = datetime.now().strftime("%Y%m%d_%H%M")
     if config.postfix:
@@ -405,6 +413,25 @@ def merge_same_role_messages(messages):
             merged_messages.append(message)
     return merged_messages
 
+def format_attempt_content(attempt_content: str, reward: float, config: MathConfig, tag_name: str = "Attempt") -> str:
+    """Format attempt content with improved formatting."""
+    # Truncate to last N characters
+    if len(attempt_content) > config.max_attempt_length:
+        attempt_content = attempt_content[-config.max_attempt_length:]
+        attempt_content = "..." + attempt_content
+    
+    # Replace multiple newlines with single newline
+    import re
+    attempt_content = re.sub(r'\n+', '\n', attempt_content)
+    
+    # Format with reward in front and human readable reward format
+    if reward is None:
+        formatted_content = f"<{tag_name}>\n{attempt_content}\n</{tag_name}>"
+    else:
+        formatted_content = f"<{tag_name}>**Reward: {reward:.2f}**\n{attempt_content}\n</{tag_name}>"
+    
+    return formatted_content
+
 def get_clinet(base_url, model_name):
     api_key = os.getenv("OPENROUTER_API_KEY") if 'openrouter' in base_url else None
     client = AsyncOpenAI(base_url=base_url, api_key=api_key)
@@ -416,10 +443,10 @@ async def generate_model_output(client: AsyncOpenAI, model_name: str, messages: 
     kwargs["extra_body"] = kwargs.get("extra_body", {})
     if config.disable_reasoning:
         messages.insert(0, {"role": "system", "content": "/no_think"})
-    if 'openrouter' in str(client.base_url):
-        kwargs["extra_body"]["provider"] = {
-            "only": ["chutes"]
-        }
+    # if 'openrouter' in str(client.base_url):
+    #     kwargs["extra_body"]["provider"] = {
+    #         "only": ["chutes"]
+    #     }
 
     input_text = [m['role'] + ": " + m['content'] for m in messages]
     input_text = "\n".join(input_text)
@@ -428,7 +455,9 @@ async def generate_model_output(client: AsyncOpenAI, model_name: str, messages: 
         config.max_completion_tokens,
         config.vllm_context_size - num_input_tokens - config.context_size_safety_margin,
     )
-    assert adjusted_max_completion_tokens > 0, "adjusted_max_completion_tokens is not positive"
+    assert adjusted_max_completion_tokens > 0, f"adjusted_max_completion_tokens is not positive: {adjusted_max_completion_tokens}"
+    if adjusted_max_completion_tokens < config.max_completion_tokens:
+        logger.warning(f"had to truncate the max_completion_tokens from {config.max_completion_tokens} to {adjusted_max_completion_tokens}")
 
     while True:
         try:
@@ -520,16 +549,40 @@ async def run_evaluation(config: MathConfig, data: DataStore = None):
     for round_idx in range(start_round, config.rounds):
         async def ICRL_interaction(problem_idx):
             messages = []
-            messages.append({"role": "user", "content": f"{data.problem_histories[problem_idx].problem.problem}\n\n"})
+            length_tracker = LengthTracker(config.vllm_context_size - config.max_completion_tokens, client.encoder, config)
+
+            # Add instruction based on round type and task description
+            if config.icrl_mode == Methods.ICRL:
+                if config.explore_and_exploit:
+                    instruction = config.explore_and_exploit_instruction
+                elif config.neutral_prompt:
+                    instruction = config.neutral_round_instruction
+                else:
+                    instruction = config.exploration_instruction if round_idx % 2 == 0 else config.exploitation_instruction
+            elif config.icrl_mode == Methods.RANDOM_SAMPLING:
+                instruction = config.neutral_round_instruction
+            elif config.react:
+                instruction = config.react_instruction
+            else:
+                raise ValueError(f"Invalid Method: {config.icrl_mode}")
+            instruction_message = {"role": "user", "content": f"\n\n{instruction}"}
+            assert length_tracker.can_i_add_this_message(instruction_message), f"Instruction message is too long!! {instruction_message}"
+            message = {"role": "user", "content": f"{data.problem_histories[problem_idx].problem.problem}\n\n"}
+            assert length_tracker.can_i_add_this_message(message), f"Initial message is too long!! {message}"
+            messages.append(message)
             sorted_attempts = sorted(data.problem_histories[problem_idx].attempts, key=lambda x: x.reward, reverse=True)
-            length_tracker = LengthTracker(config.vllm_context_size, client.encoder, config)
-            for attempt in sorted_attempts:
-                message = {"role": "user", "content": f"<Attempt>\n{attempt.model_output}\n**Reward:** {attempt.reward}\n</Attempt>"}
+            if config.max_attempts_in_context is not None:
+                sorted_attempts = sorted_attempts[:config.max_attempts_in_context]
+            for i, attempt in enumerate(sorted_attempts):
+                formatted_attempt = format_attempt_content(attempt.model_output, attempt.reward, config, "Attempt")
+                # Add double newline between attempts (except for the first one)
+                if i > 0:
+                    formatted_attempt = "\n\n" + formatted_attempt
+                message = {"role": "user", "content": formatted_attempt}
                 if not length_tracker.can_i_add_this_message(message):
                     break
                 messages.append(message)
-            instruction = config.exploration_instruction if round_idx % 2 == 0 else config.exploitation_instruction
-            messages.append({"role": "user", "content": f"\n\n{instruction}"})
+            messages.append(instruction_message)
             messages = merge_same_role_messages(messages)
             
             output = await generate_model_output(client, config.model_name, messages, config)
@@ -549,11 +602,21 @@ async def run_evaluation(config: MathConfig, data: DataStore = None):
 
         async def reflexion_interaction(problem_idx):
             messages = []
-            messages.append({"role": "user", "content": f"{data.problem_histories[problem_idx].problem.problem}\n\n"})
-            for attempt in data.problem_histories[problem_idx].attempts:
-                messages.append({"role": "user", "content": f"<Reflection>\n{attempt.extra_fields['reflection']}\n**Reward:** {attempt.reward}\n</Reflection>"})
+            length_tracker = LengthTracker(config.vllm_context_size - config.max_completion_tokens, client.encoder, config)
+            
             instruction = config.use_reflexion_instruction if not config.selfrefine else config.use_selfrefine_instruction
-            messages.append({"role": "user", "content": f"\n\n{instruction}"})
+            instruction_message = {"role": "user", "content": f"\n\n{instruction}"}
+            assert length_tracker.can_i_add_this_message(instruction_message), f"Instruction message is too long!! {instruction_message}"
+            message = {"role": "user", "content": f"{data.problem_histories[problem_idx].problem.problem}\n\n"}
+            assert length_tracker.can_i_add_this_message(message), f"Initial message is too long!! {message}"
+            messages.append(message)
+            for i, attempt in enumerate(data.problem_histories[problem_idx].attempts):
+                formatted_reflection = format_attempt_content(attempt.extra_fields['reflection'], None, config, "Reflection")
+                # Add double newline between reflections (except for the first one)
+                if i > 0:
+                    formatted_reflection = "\n\n" + formatted_reflection
+                messages.append({"role": "user", "content": formatted_reflection})
+            messages.append(instruction_message)
             messages = merge_same_role_messages(messages)
             
             output = await generate_model_output(client, config.model_name, messages, config)

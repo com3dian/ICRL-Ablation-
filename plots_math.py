@@ -245,20 +245,38 @@ def plot_cost_reward_sum(*args, **kwargs):
     plt.show()
 
 #%%
-df_icrl = get_sum_df("/home/jovyan/shared/amoeini/neurips/ICRL-for-LLM-Agent/ICL/math/icrl/20250726_2302")
-df_icrl_2 = get_sum_df("/home/jovyan/shared/amoeini/neurips/ICRL-for-LLM-Agent/ICL/math/icrl/20250727_1630")
+df_icrl_aime_firstday = get_sum_df("/home/jovyan/shared/amoeini/neurips/ICRL-for-LLM-Agent/ICL/math/icrl/20250726_2302")
+df_aime = get_sum_df("/home/jovyan/shared/amoeini/neurips/ICRL-for-LLM-Agent/ICL/math/icrl/20250727_2221_aime25")
 #%%
-df_icrl_2
+data = DataStore.load_data_snapshot("/home/jovyan/shared/amoeini/neurips/ICRL-for-LLM-Agent/ICL/math/icrl/20250727_2221_aime25")
 #%%
-data0 = DataStore.load_data_snapshot("/home/jovyan/shared/amoeini/neurips/ICRL-for-LLM-Agent/ICL/math/icrl/20250726_2302")
-data1 = DataStore.load_data_snapshot("/home/jovyan/shared/amoeini/neurips/ICRL-for-LLM-Agent/ICL/math/icrl/20250727_1630")
-# %%
-for i in range(len(data0.problem_histories[2].attempts)):
-    attempt = data1.problem_histories[2].attempts[i]
-    print(attempt.round_idx, attempt.reward, '-'*100)
+quantiles = df_aime.quantile([0.25, 0.5, 0.75], axis=1)
+print(quantiles)
+#%%
+# Print all raw prompts and model outputs for question 0
+problem_idx = 5  # You can change this to select a different problem
+print("="*100)
+print(f"QUESTION {problem_idx} - PROBLEM:")
+print("="*100)
+problem_text = data.problem_histories[problem_idx].problem.problem
+print(problem_text)
+print(f"\nCorrect Answer: {data.problem_histories[problem_idx].problem.answer}")
+print("\n" + "="*100)
+
+print("\nALL ATTEMPTS FOR QUESTION 0:")
+print("="*100)
+
+for i, attempt in enumerate(data.problem_histories[problem_idx].attempts):
+    print(f"\n{'='*50} ATTEMPT {i+1} (Round {attempt.round_idx}) {'='*50}")
+    print(f"Reward: {attempt.reward}")
+    print("\nRAW PROMPT:")
+    print("-" * 80)
+    for j, message in enumerate(attempt.raw_prompt):
+        print(f"Message {j+1} ({message['role']}):")
+        print(message['content'])
+        print("-" * 40)
+    
+    print("\nMODEL OUTPUT:")
+    print("-" * 80)
     print(attempt.model_output)
-# %%
-for i in range(len(data0.problem_histories[2].attempts)):
-    attempt = data0.problem_histories[2].attempts[i]
-    print(attempt.round_idx, attempt.reward, '-'*100)
-    print(attempt.model_output)
+    print("-" * 80)
