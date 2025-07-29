@@ -67,6 +67,7 @@ class MathConfig:
     debug_run: bool = False
     max_attempts_in_context: Optional[int] = None # Ablation
     # zero_out_rewards: bool = False # Ablation
+    random_rewards: bool = False # Ablation
     # no_rewards: bool = False # Ablation
     # explore_only: bool = False # Ablation
     # exploit_only: bool = False # Ablation
@@ -352,6 +353,8 @@ class RewardModel:
             mock_reward_client(self.score_client)
 
     async def get_reward_for_answer(self, model_output, problem_instance: DataStore.Problem, config: MathConfig):
+        if config.random_rewards:
+            return np.random.uniform(0, 1)
         reference = problem_instance.answer
         model_answer = extract_answer(model_output)
         if model_answer == reference:
