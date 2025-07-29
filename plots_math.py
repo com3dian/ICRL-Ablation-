@@ -253,17 +253,23 @@ def plot_cost_reward_sum(*args, **kwargs):
 df_aime = get_sum_df("/home/jovyan/shared/amoeini/neurips/ICRL-for-LLM-Agent/ICL/math/icrl/20250728_0008_aime25_formatted_weird")
 df_aime_local = get_sum_df("/home/jovyan/shared/amoeini/neurips/ICRL-for-LLM-Agent/ICL/math/icrl/20250728_2109_aime_local")
 df_aime_local_notee = get_sum_df("/home/jovyan/shared/amoeini/neurips/ICRL-for-LLM-Agent/ICL/math/icrl/20250729_0118_aime_local_notee")
-df_aime_reflexion_fair = get_sum_df("/home/jovyan/shared/amoeini/neurips/ICRL-for-LLM-Agent/ICL/math/reflexion/20250728_2240_aime_reflexion")
-df_aime_selfrefine = get_sum_df("/home/jovyan/shared/amoeini/neurips/ICRL-for-LLM-Agent/ICL/math/selfrefine/20250728_2308_aime_selfrefine")
+df_aime_reflexion_fair = get_sum_df("/home/jovyan/shared/amoeini/neurips/ICRL-for-LLM-Agent/ICL/math/reflexion/20250728_2240_aime_reflexion") #crashed
+df_aime_selfrefine = get_sum_df("/home/jovyan/shared/amoeini/neurips/ICRL-for-LLM-Agent/ICL/math/selfrefine/20250728_2308_aime_selfrefine") #crashed
 
 df_hmmt_local = get_sum_df("/home/jovyan/shared/amoeini/neurips/ICRL-for-LLM-Agent/ICL/math/icrl/20250728_2235_hmmt")
-df_hmmt_reflexion = get_sum_df("/home/jovyan/shared/amoeini/neurips/ICRL-for-LLM-Agent/ICL/math/reflexion/20250728_2025_hmmt_reflexion")
-df_hmmt_selfrefine_fair = get_sum_df("/home/jovyan/shared/amoeini/neurips/ICRL-for-LLM-Agent/ICL/math/selfrefine/20250728_2308_hmmt_selfrefine")
-df_hmmt_reflexion_fair = get_sum_df("/home/jovyan/shared/amoeini/neurips/ICRL-for-LLM-Agent/ICL/math/reflexion/20250728_2325_hmmt_reflexion")
+df_hmmt_selfrefine_fair = get_sum_df("/home/jovyan/shared/amoeini/neurips/ICRL-for-LLM-Agent/ICL/math/selfrefine/20250728_2308_hmmt_selfrefine") #crashed
+df_hmmt_reflexion = get_sum_df("/home/jovyan/shared/amoeini/neurips/ICRL-for-LLM-Agent/ICL/math/reflexion/20250728_2025_hmmt_reflexion") #crashed
+df_hmmt_reflexion_fair = get_sum_df("/home/jovyan/shared/amoeini/neurips/ICRL-for-LLM-Agent/ICL/math/reflexion/20250728_2325_hmmt_reflexion") #crashed
 
 # qwen3.32b reasoning
 df_aime_reason = get_sum_df("/home/jovyan/shared/amoeini/neurips/ICRL-for-LLM-Agent/ICL/math/icrl/20250728_1719_aime_reason")
+df_hmmt_reason = get_sum_df("/home/jovyan/shared/amoeini/neurips/ICRL-for-LLM-Agent/ICL/math/icrl/20250728_2314_hmmt_reason")
 df_aime_reason_reflexion = get_sum_df("/home/jovyan/shared/amoeini/neurips/ICRL-for-LLM-Agent/ICL/math/reflexion/20250728_2127_aime_reason_reflexion")
+df_hmmt_reason_reflexion = get_sum_df("/home/jovyan/shared/amoeini/neurips/ICRL-for-LLM-Agent/ICL/math/reflexion/20250728_2314_hmmt_reason_reflexion")
+df_aime_reason_reflextion2 = get_sum_df("/home/jovyan/shared/amoeini/neurips/ICRL-for-LLM-Agent/ICL/math/reflexion/20250729_0434_aime_reason_reflexion")
+df_hmmt_reason_reflextion2 = get_sum_df("/home/jovyan/shared/amoeini/neurips/ICRL-for-LLM-Agent/ICL/math/reflexion/20250729_0434_hmmt_reason_reflexion")
+df_aime_reason_selfrefine = get_sum_df("/home/jovyan/shared/amoeini/neurips/ICRL-for-LLM-Agent/ICL/math/selfrefine/20250729_0435_aime_reason_selfrefine")
+df_hmmt_reason_selfrefine = get_sum_df("/home/jovyan/shared/amoeini/neurips/ICRL-for-LLM-Agent/ICL/math/selfrefine/20250729_0435_hmmt_reason_selfrefine")
 #%%
 data = DataStore.load_data_snapshot("/home/jovyan/shared/amoeini/neurips/ICRL-for-LLM-Agent/ICL/math/icrl/20250728_0008_aime25_formatted_weird")
 #%%
@@ -310,6 +316,10 @@ plot_per_step_running_max(
     label_0="HMMT Reflexion", label_1="HMMT Selfrefine Fair", label_2="HMMT Reflexion Fair", label_3="HMMT Local", param=1)
 #%%
 plot_per_step_running_max(
-    df_aime_reason, df_aime_reason_reflexion,
-    label_0="AIME Reason", label_1="AIME Reason Reflexion", param=1)
+    df_aime_reason, df_aime_reason_reflexion, df_aime_reason_reflextion2, df_aime_reason_selfrefine,
+    label_0="AIME Reason", label_1="AIME Reason Reflexion", label_2="AIME Reason Reflexion 2", label_3="AIME Reason Selfrefine", param=1)
+#%%
+plot_per_step_running_max(
+    df_hmmt_reason, df_hmmt_reason_reflexion, df_hmmt_reason_reflextion2, df_hmmt_reason_selfrefine,
+    label_0="HMMT Reason", label_1="HMMT Reason Reflexion", label_2="HMMT Reason Reflexion 2", label_3="HMMT Reason Selfrefine", param=1)
 #%%

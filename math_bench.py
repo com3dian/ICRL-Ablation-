@@ -624,6 +624,12 @@ async def run_evaluation(config: MathConfig, data: DataStore = None):
             instruction = config.use_reflexion_instruction if not config.selfrefine else config.use_selfrefine_instruction
             instruction_message = {"role": "user", "content": f"\n\n{instruction}"}
             assert length_tracker.can_i_add_this_message(instruction_message), f"Instruction message is too long!! {instruction_message}"
+            
+            # Also check the reflection instruction that will be added later
+            reflection_instruction = config.do_reflexion_instruction if not config.selfrefine else config.do_selfrefine_instruction
+            reflection_instruction_message = {"role": "user", "content": f"{reflection_instruction}"}
+            assert length_tracker.can_i_add_this_message(reflection_instruction_message), f"Reflection instruction message is too long!! {reflection_instruction_message}"
+            
             message = {"role": "user", "content": f"{data.problem_histories[problem_idx].problem.problem}\n\n"}
             assert length_tracker.can_i_add_this_message(message), f"Initial message is too long!! {message}"
             messages.append(message)
@@ -632,7 +638,10 @@ async def run_evaluation(config: MathConfig, data: DataStore = None):
                 # Add double newline between reflections (except for the first one)
                 if i > 0:
                     formatted_reflection = "\n\n" + formatted_reflection
-                messages.append({"role": "user", "content": formatted_reflection})
+                message = {"role": "user", "content": formatted_reflection}
+                if not length_tracker.can_i_add_this_message(message):
+                    break
+                messages.append(message)
             messages.append(instruction_message)
             messages = merge_same_role_messages(messages)
             
@@ -654,8 +663,7 @@ async def run_evaluation(config: MathConfig, data: DataStore = None):
 
             # reflection
             messages.append({"role": "assistant", "content": f"{model_output}\n**Reward:** {reward}\n"})
-            instruction = config.do_reflexion_instruction if not config.selfrefine else config.do_selfrefine_instruction
-            messages.append({"role": "user", "content": f"{instruction}"})
+            messages.append({"role": "user", "content": f"{reflection_instruction}"})
             current_attempt.extra_fields['reflection_raw_prompt'] = copy.deepcopy(messages)
             
             output = await generate_model_output(client, config.model_name, messages, config, max_completion_tokens=config.reflection_max_completion_tokens)
