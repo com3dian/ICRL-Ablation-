@@ -264,9 +264,9 @@ df_hmmt_reflexion_fair = get_sum_df("/home/jovyan/shared/amoeini/neurips/ICRL-fo
 # qwen3.32b reasoning
 df_aime_reason = get_sum_df("/home/jovyan/shared/amoeini/neurips/ICRL-for-LLM-Agent/ICL/math/icrl/20250728_1719_aime_reason")
 df_hmmt_reason = get_sum_df("/home/jovyan/shared/amoeini/neurips/ICRL-for-LLM-Agent/ICL/math/icrl/20250728_2314_hmmt_reason")
-df_aime_reason_reflexion = get_sum_df("/home/jovyan/shared/amoeini/neurips/ICRL-for-LLM-Agent/ICL/math/reflexion/20250728_2127_aime_reason_reflexion")
-df_hmmt_reason_reflexion = get_sum_df("/home/jovyan/shared/amoeini/neurips/ICRL-for-LLM-Agent/ICL/math/reflexion/20250728_2314_hmmt_reason_reflexion")
-df_aime_reason_reflextion2 = get_sum_df("/home/jovyan/shared/amoeini/neurips/ICRL-for-LLM-Agent/ICL/math/reflexion/20250729_0434_aime_reason_reflexion")
+df_aime_reason_reflexion = get_sum_df("/home/jovyan/shared/amoeini/neurips/ICRL-for-LLM-Agent/ICL/math/reflexion/20250728_2127_aime_reason_reflexion") #crashed
+df_hmmt_reason_reflexion = get_sum_df("/home/jovyan/shared/amoeini/neurips/ICRL-for-LLM-Agent/ICL/math/reflexion/20250728_2314_hmmt_reason_reflexion") #crashed
+df_aime_reason_reflextion2 = get_sum_df("/home/jovyan/shared/amoeini/neurips/ICRL-for-LLM-Agent/ICL/math/reflexion/20250729_0434_aime_reason_reflexion") 
 df_hmmt_reason_reflextion2 = get_sum_df("/home/jovyan/shared/amoeini/neurips/ICRL-for-LLM-Agent/ICL/math/reflexion/20250729_0434_hmmt_reason_reflexion")
 df_aime_reason_selfrefine = get_sum_df("/home/jovyan/shared/amoeini/neurips/ICRL-for-LLM-Agent/ICL/math/selfrefine/20250729_0435_aime_reason_selfrefine")
 df_hmmt_reason_selfrefine = get_sum_df("/home/jovyan/shared/amoeini/neurips/ICRL-for-LLM-Agent/ICL/math/selfrefine/20250729_0435_hmmt_reason_selfrefine")

@@ -224,9 +224,10 @@ def parse_args():
     # Runtime modifications
 
     if config.debug_run:
-        # config.num_problems = 1
+        config.num_problems = 1
         config.rounds = 10
-        # config.num_initial_attempts = 1
+        config.num_initial_attempts = 1
+        config.max_completion_tokens = 200
         logger.info("*"*100)
         logger.info("Debug run")
         logger.info("*"*100)
@@ -258,9 +259,10 @@ def parse_args():
     # assert sum([config.no_rewards, config.zero_out_rewards]) <= 1, "Only one of positive_only, no_rewards, or zero_out_rewards can be true"
 
     # save config
-    output_path.mkdir(parents=True, exist_ok=True)
-    with open(output_path / "config.yaml", "w") as f:
-        OmegaConf.save(config, f)
+    if not config.debug_run:
+        output_path.mkdir(parents=True, exist_ok=True)
+        with open(output_path / "config.yaml", "w") as f:
+            OmegaConf.save(config, f)
     
     return config
 
@@ -313,9 +315,7 @@ class DataStore:
                 logger.info(f"Deleted previous snapshot: {delete}")
     
     @staticmethod
-    def load_data_snapshot(checkpoint_path, is_debug=False): #! todo needs features
-        if is_debug:
-            return None
+    def load_data_snapshot(checkpoint_path):
         filename = find_math_file(checkpoint_path)
         with open(filename, "rb") as f:
             return pickle.load(f)
@@ -349,8 +349,8 @@ def extract_answer(output):
 class RewardModel:
     def __init__(self, config: MathConfig):
         self.score_client = get_clinet(config.score_vllm_address, config.score_model_name)
-        if config.debug_run:
-            mock_reward_client(self.score_client)
+        # if config.debug_run:
+        #     mock_reward_client(self.score_client)
 
     async def get_reward_for_answer(self, model_output, problem_instance: DataStore.Problem, config: MathConfig):
         if config.random_rewards:
@@ -434,7 +434,6 @@ def format_attempt_content(attempt_content: str, reward: float, config: MathConf
         attempt_content = attempt_content + "..."
     
     # Replace multiple newlines with single newline
-    import re
     attempt_content = re.sub(r'\n+', '\n', attempt_content)
     
     # Format with reward in front and human readable reward format
@@ -482,8 +481,14 @@ async def generate_model_output(client: AsyncOpenAI, model_name: str, messages: 
                 max_completion_tokens=adjusted_max_completion_tokens,
                 **kwargs,
             )
-            if not config.disable_reasoning and hasattr(output.choices[0].message, 'reasoning'):
-                output.choices[0].message.content = f"<think>\n{output.choices[0].message.reasoning}\n</think>\n\n{output.choices[0].message.content}"
+            if not config.disable_reasoning:
+                if hasattr(output.choices[0].message, 'reasoning') and len(output.choices[0].message.reasoning) > 20:
+                    output.choices[0].message.content = f"<think>\n{output.choices[0].message.reasoning}\n</think>\n\n{output.choices[0].message.content}"
+                else:
+                    # remove any <think> or </think> tags
+                    # then add empty think tags in the beginning
+                    cleaned_content = re.sub(r'<think>|</think>', '', output.choices[0].message.content)
+                    output.choices[0].message.content = f"<think></think>\n\n{cleaned_content}"
             else:
                 output.choices[0].message.content = re.sub(r'<think>.*?</think>\s*', '', output.choices[0].message.content, flags=re.DOTALL)
             assert len(output.choices[0].message.content) > 0, "Output is empty"
@@ -522,8 +527,8 @@ async def run_evaluation(config: MathConfig, data: DataStore = None):
         data.init_problems(config)
     
     client = get_clinet(config.vllm_address, config.model_name)
-    if config.debug_run:
-        mock_client(client)
+    # if config.debug_run:
+    #     mock_client(client)
     reward_model = RewardModel(config)
 
     async def initial_interaction(problem_idx):
@@ -753,18 +758,22 @@ async def main():
     # Parse command line arguments and get a config object
     config = parse_args()
     
+    handlers = []
     # Configure logging with custom formatter
     handler = logging.StreamHandler()
     handler.setFormatter(ColoredFormatter('%(message)s'))
+    handlers.append(handler)
     
-    # Add file logging
-    log_file = Path(config.output_path) / "output.log"
-    file_handler = logging.FileHandler(log_file, mode='w')
-    file_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
+    if not config.debug_run:
+        # Add file logging
+        log_file = Path(config.output_path) / "output.log"
+        file_handler = logging.FileHandler(log_file, mode='w')
+        file_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
+        handlers.append(file_handler)
     
     logging.basicConfig(
         level=logging.INFO,
-        handlers=[handler, file_handler]
+        handlers=handlers
     )
     logger.setLevel(logging.INFO)
     
@@ -774,7 +783,7 @@ async def main():
     
     data = None
     if config.checkpoint_path:
-        data = DataStore.load_data_snapshot(config.checkpoint_path, config.debug_run)
+        data = DataStore.load_data_snapshot(config.checkpoint_path)
     await run_evaluation(config, data)
 
 if __name__ == "__main__":
