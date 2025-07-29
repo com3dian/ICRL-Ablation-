@@ -72,7 +72,8 @@ def get_sum_df(path):
         # Group attempts by round
         attempts_by_round = defaultdict(list)
         for attempt in problem_history.attempts:
-            attempts_by_round[attempt.round_idx].append(attempt.reward)
+            reward = 1 if attempt.reward > .9 else 0
+            attempts_by_round[attempt.round_idx].append(reward)
         
         # For each round, take the sum/mean of rewards (depending on what makes sense)
         for round_idx in all_rounds:
@@ -122,6 +123,7 @@ def plot_per_step_running_max(*dfs, **kwargs):
     
     colors = ['b', 'r', 'g', 'c', 'm', 'y', 'k']  # Add more colors if needed
     
+    first_perf = []
     for idx, df in enumerate(dfs):
         # create running max df
         df_running_max = df.cummax(axis=0)
@@ -131,9 +133,11 @@ def plot_per_step_running_max(*dfs, **kwargs):
         rounds = df.index
         color = colors[idx % len(colors)]
         label = kwargs.get(f'label_{idx}', f'Method {idx+1}')
-        print(means)
+        print(label, means.iloc[-1])
+        first_perf.append(means.iloc[0])
         ax.plot(rounds, means, f'{color}-', label=label)
         ax.fill_between(rounds, means - std_devs, means + std_devs, alpha=0.3, color=color)
+    print('first perf', np.mean(first_perf))
 
     ax.set_xlabel('Trial Number')
     ax.set_ylabel('Running Max Episode Return')
@@ -245,16 +249,32 @@ def plot_cost_reward_sum(*args, **kwargs):
     plt.show()
 
 #%%
-df_icrl_aime_firstday = get_sum_df("/home/jovyan/shared/amoeini/neurips/ICRL-for-LLM-Agent/ICL/math/icrl/20250726_2302")
-df_aime = get_sum_df("/home/jovyan/shared/amoeini/neurips/ICRL-for-LLM-Agent/ICL/math/icrl/20250727_2221_aime25")
+# qwen3.32b
+df_aime = get_sum_df("/home/jovyan/shared/amoeini/neurips/ICRL-for-LLM-Agent/ICL/math/icrl/20250728_0008_aime25_formatted_weird")
+df_aime_local = get_sum_df("/home/jovyan/shared/amoeini/neurips/ICRL-for-LLM-Agent/ICL/math/icrl/20250728_2109_aime_local")
+df_aime_local_notee = get_sum_df("/home/jovyan/shared/amoeini/neurips/ICRL-for-LLM-Agent/ICL/math/icrl/20250729_0118_aime_local_notee")
+df_aime_reflexion_fair = get_sum_df("/home/jovyan/shared/amoeini/neurips/ICRL-for-LLM-Agent/ICL/math/reflexion/20250728_2240_aime_reflexion")
+df_aime_selfrefine = get_sum_df("/home/jovyan/shared/amoeini/neurips/ICRL-for-LLM-Agent/ICL/math/selfrefine/20250728_2308_aime_selfrefine")
+
+df_hmmt_local = get_sum_df("/home/jovyan/shared/amoeini/neurips/ICRL-for-LLM-Agent/ICL/math/icrl/20250728_2235_hmmt")
+df_hmmt_reflexion = get_sum_df("/home/jovyan/shared/amoeini/neurips/ICRL-for-LLM-Agent/ICL/math/reflexion/20250728_2025_hmmt_reflexion")
+df_hmmt_selfrefine_fair = get_sum_df("/home/jovyan/shared/amoeini/neurips/ICRL-for-LLM-Agent/ICL/math/selfrefine/20250728_2308_hmmt_selfrefine")
+df_hmmt_reflexion_fair = get_sum_df("/home/jovyan/shared/amoeini/neurips/ICRL-for-LLM-Agent/ICL/math/reflexion/20250728_2325_hmmt_reflexion")
+
+# qwen3.32b reasoning
+df_aime_reason = get_sum_df("/home/jovyan/shared/amoeini/neurips/ICRL-for-LLM-Agent/ICL/math/icrl/20250728_1719_aime_reason")
+df_aime_reason_reflexion = get_sum_df("/home/jovyan/shared/amoeini/neurips/ICRL-for-LLM-Agent/ICL/math/reflexion/20250728_2127_aime_reason_reflexion")
 #%%
-data = DataStore.load_data_snapshot("/home/jovyan/shared/amoeini/neurips/ICRL-for-LLM-Agent/ICL/math/icrl/20250727_2221_aime25")
+data = DataStore.load_data_snapshot("/home/jovyan/shared/amoeini/neurips/ICRL-for-LLM-Agent/ICL/math/icrl/20250728_0008_aime25_formatted_weird")
 #%%
-quantiles = df_aime.quantile([0.25, 0.5, 0.75], axis=1)
+df_stat = df_aime
+quantiles = df_stat.quantile([0.25, 0.5, 0.75], axis=1)
 print(quantiles)
+print()
+print(df_stat.mean(axis=1))
 #%%
 # Print all raw prompts and model outputs for question 0
-problem_idx = 5  # You can change this to select a different problem
+problem_idx = 10  # You can change this to select a different problem
 print("="*100)
 print(f"QUESTION {problem_idx} - PROBLEM:")
 print("="*100)
@@ -280,3 +300,16 @@ for i, attempt in enumerate(data.problem_histories[problem_idx].attempts):
     print("-" * 80)
     print(attempt.model_output)
     print("-" * 80)
+#%%
+plot_per_step_running_max(
+    df_aime, df_aime_local, df_aime_local_notee, df_aime_reflexion_fair, df_aime_selfrefine,
+    label_0="AIME", label_1="AIME Local", label_2="AIME Local Notee", label_3="AIME Reflexion Fair", label_4="AIME Selfrefine", param=1)
+#%%
+plot_per_step_running_max(
+    df_hmmt_reflexion, df_hmmt_selfrefine_fair, df_hmmt_reflexion_fair, df_hmmt_local,
+    label_0="HMMT Reflexion", label_1="HMMT Selfrefine Fair", label_2="HMMT Reflexion Fair", label_3="HMMT Local", param=1)
+#%%
+plot_per_step_running_max(
+    df_aime_reason, df_aime_reason_reflexion,
+    label_0="AIME Reason", label_1="AIME Reason Reflexion", param=1)
+#%%

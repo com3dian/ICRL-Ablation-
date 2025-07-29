@@ -1,4 +1,5 @@
 import pickle
+import re
 import glob
 import time
 import os
@@ -91,12 +92,13 @@ class MathConfig:
     vllm_context_size: int = 32768
     score_model_name: str = "virtuoussy/Qwen2.5-7B-Instruct-RLVR"
     score_vllm_address: str = "http://localhost:11436/v1"
-    score_vllm_context_size: int = 4096
-    disable_reasoning: bool = True
+    score_vllm_context_size: int = 2048
+    disable_reasoning: bool = False
     temperature: float = 1.0  
-    max_completion_tokens: int = 4096
+    max_completion_tokens: int = 4096 * 4
     context_size_safety_margin: int = 75
-    max_attempt_length: int = 2000
+    max_attempt_length: int = 512
+    reflection_max_completion_tokens: int = 512
 
     checkpoint_path: Optional[str] = None
     
@@ -114,7 +116,7 @@ Write your final answer in the format of <answer>...</answer>.
 
     explore_and_exploit_instruction: str = """
 You get multiple attempts to complete the task. You can see the previous attempts and their rewards.
-For this attempt, decide whether to try a completely different approach or to learn from and improve on the previous attempts. Then, continue to answer the question.
+For this attempt, decide whether to try a completely different approach or to improve on a previous attempt. Then, continue to answer the question.
 Write your final answer in the format of <answer>...</answer>.
 """
 
@@ -133,17 +135,21 @@ Before giving your final answer, carefully reason step-by-step:
 Then, clearly present your final solution in the format of <answer>...</answer>.
 """
 
-    do_reflexion_instruction: str = """
-Review your previous unsuccessful attempt at this math problem. Instead of repeating the solution process, critically analyze:
-1. Exactly where you made errors or incorrect assumptions.
-2. Which mathematical concepts or steps you misunderstood or misapplied.
-3. How these errors impacted your final answer.
+#     do_reflexion_instruction: str = """
+# Review your previous unsuccessful attempt at this math problem. Instead of repeating the solution process, critically analyze:
+# 1. Exactly where you made errors or incorrect assumptions.
+# 2. Which mathematical concepts or steps you misunderstood or misapplied.
+# 3. How these errors impacted your final answer.
 
-After reflection, write a concise, improved solution strategy that explicitly addresses these issues, ensuring you correctly apply the needed concepts and steps in the future.
+# After reflection, write a concise, improved solution strategy that explicitly addresses these issues, ensuring you correctly apply the needed concepts and steps in the future.
+# """
+
+    do_reflexion_instruction: str = """
+Explain what went wrong in your previous solution attempt and identify the specific mistake. Then, describe briefly how you will change your approach to avoid that error.
 """
 
     use_reflexion_instruction: str = """
-Consider your reflections on past mistakes for this math problem. Apply those insights now to solve the problem accurately.
+Consider your reflections on past mistakes for this math problem. Apply those insights now to solve the problem correctly.
 Write your corrected final answer in the format of <answer>...</answer>.
 """
 
@@ -247,8 +253,8 @@ def parse_args():
     config.is_openrouter = '/' in config.model_name
 
     # sanity checks
-    assert sum([config.explore_only, config.explore_and_exploit]) <= 1, "Only one of explore_only or explore_and_exploit can be true"
-    assert sum([config.no_rewards, config.zero_out_rewards]) <= 1, "Only one of positive_only, no_rewards, or zero_out_rewards can be true"
+    # assert sum([config.explore_only, config.explore_and_exploit]) <= 1, "Only one of explore_only or explore_and_exploit can be true"
+    # assert sum([config.no_rewards, config.zero_out_rewards]) <= 1, "Only one of positive_only, no_rewards, or zero_out_rewards can be true"
 
     # save config
     output_path.mkdir(parents=True, exist_ok=True)
@@ -337,7 +343,6 @@ def extract_answer(output):
     if match:
         return match.group(1)
     else:
-        # logger.warning(f"No answer found in {output}")
         return 0
 
 class RewardModel:
@@ -386,7 +391,6 @@ class RewardModel:
                     max_completion_tokens=10,
                 )
             except openai.BadRequestError as e:
-                import pprint
                 logger.warning(f"length of input tokens: {len(input_tokens)}")
                 logger.warning("messages:")
                 logger.warning(str(messages))
@@ -413,12 +417,16 @@ def merge_same_role_messages(messages):
             merged_messages.append(message)
     return merged_messages
 
-def format_attempt_content(attempt_content: str, reward: float, config: MathConfig, tag_name: str = "Attempt") -> str:
+def format_attempt_content(attempt_content: str, reward: float, config: MathConfig, tokenizer: AutoTokenizer, tag_name: str = "Attempt") -> str:
     """Format attempt content with improved formatting."""
-    # Truncate to last N characters
-    if len(attempt_content) > config.max_attempt_length:
-        attempt_content = attempt_content[-config.max_attempt_length:]
-        attempt_content = "..." + attempt_content
+    # Truncate to last N tokens instead of characters
+    tokens = tokenizer.encode(attempt_content)
+    if len(tokens) > config.max_attempt_length:
+        # truncated_tokens = tokens[-config.max_attempt_length:]
+        truncated_tokens = tokens[:config.max_attempt_length]
+        attempt_content = tokenizer.decode(truncated_tokens)
+        # attempt_content = "..." + attempt_content
+        attempt_content = attempt_content + "..."
     
     # Replace multiple newlines with single newline
     import re
@@ -428,7 +436,7 @@ def format_attempt_content(attempt_content: str, reward: float, config: MathConf
     if reward is None:
         formatted_content = f"<{tag_name}>\n{attempt_content}\n</{tag_name}>"
     else:
-        formatted_content = f"<{tag_name}>**Reward: {reward:.2f}**\n{attempt_content}\n</{tag_name}>"
+        formatted_content = f"<{tag_name}>\n{attempt_content}\n</{tag_name}>**Achieved score: {int(reward * 100)}/100**"
     
     return formatted_content
 
@@ -451,13 +459,14 @@ async def generate_model_output(client: AsyncOpenAI, model_name: str, messages: 
     input_text = [m['role'] + ": " + m['content'] for m in messages]
     input_text = "\n".join(input_text)
     num_input_tokens = len(client.encoder.encode(input_text))
+    max_completion_tokens = kwargs.pop("max_completion_tokens", config.max_completion_tokens)
     adjusted_max_completion_tokens = min(
-        config.max_completion_tokens,
+        max_completion_tokens,
         config.vllm_context_size - num_input_tokens - config.context_size_safety_margin,
     )
     assert adjusted_max_completion_tokens > 0, f"adjusted_max_completion_tokens is not positive: {adjusted_max_completion_tokens}"
-    if adjusted_max_completion_tokens < config.max_completion_tokens:
-        logger.warning(f"had to truncate the max_completion_tokens from {config.max_completion_tokens} to {adjusted_max_completion_tokens}")
+    if adjusted_max_completion_tokens < max_completion_tokens:
+        logger.warning(f"had to truncate the max_completion_tokens from {max_completion_tokens} to {adjusted_max_completion_tokens}")
 
     while True:
         try:
@@ -468,6 +477,10 @@ async def generate_model_output(client: AsyncOpenAI, model_name: str, messages: 
                 max_completion_tokens=adjusted_max_completion_tokens,
                 **kwargs,
             )
+            if not config.disable_reasoning and hasattr(output.choices[0].message, 'reasoning'):
+                output.choices[0].message.content = f"<think>\n{output.choices[0].message.reasoning}\n</think>\n\n{output.choices[0].message.content}"
+            else:
+                output.choices[0].message.content = re.sub(r'<think>.*?</think>\s*', '', output.choices[0].message.content, flags=re.DOTALL)
             assert len(output.choices[0].message.content) > 0, "Output is empty"
             break
         except openai.RateLimitError as e:
@@ -539,7 +552,8 @@ async def run_evaluation(config: MathConfig, data: DataStore = None):
     rewards = []
     for i in range(len(data.problem_histories)):
         rewards.extend([attempt.reward for attempt in data.problem_histories[i].attempts if attempt.round_idx == -1])
-    logger.info(f"Initial rewards - 25th: {np.percentile(rewards, 25):.3f}, 50th: {np.percentile(rewards, 50):.3f}, 75th: {np.percentile(rewards, 75):.3f}")
+    if config.num_initial_attempts > 0:
+        logger.info(f"Initial rewards - 25th: {np.percentile(rewards, 25):.3f}, 50th: {np.percentile(rewards, 50):.3f}, 75th: {np.percentile(rewards, 75):.3f}")
     
     start_round = 0
     for i in range(len(data.problem_histories)):
@@ -574,7 +588,7 @@ async def run_evaluation(config: MathConfig, data: DataStore = None):
             if config.max_attempts_in_context is not None:
                 sorted_attempts = sorted_attempts[:config.max_attempts_in_context]
             for i, attempt in enumerate(sorted_attempts):
-                formatted_attempt = format_attempt_content(attempt.model_output, attempt.reward, config, "Attempt")
+                formatted_attempt = format_attempt_content(attempt.model_output, attempt.reward, config, client.encoder, "Attempt")
                 # Add double newline between attempts (except for the first one)
                 if i > 0:
                     formatted_attempt = "\n\n" + formatted_attempt
@@ -602,7 +616,7 @@ async def run_evaluation(config: MathConfig, data: DataStore = None):
 
         async def reflexion_interaction(problem_idx):
             messages = []
-            length_tracker = LengthTracker(config.vllm_context_size - config.max_completion_tokens, client.encoder, config)
+            length_tracker = LengthTracker(config.vllm_context_size - config.max_completion_tokens - config.reflection_max_completion_tokens, client.encoder, config)
             
             instruction = config.use_reflexion_instruction if not config.selfrefine else config.use_selfrefine_instruction
             instruction_message = {"role": "user", "content": f"\n\n{instruction}"}
@@ -611,7 +625,7 @@ async def run_evaluation(config: MathConfig, data: DataStore = None):
             assert length_tracker.can_i_add_this_message(message), f"Initial message is too long!! {message}"
             messages.append(message)
             for i, attempt in enumerate(data.problem_histories[problem_idx].attempts):
-                formatted_reflection = format_attempt_content(attempt.extra_fields['reflection'], None, config, "Reflection")
+                formatted_reflection = format_attempt_content(attempt.extra_fields['reflection'], None, config, client.encoder, "Reflection")
                 # Add double newline between reflections (except for the first one)
                 if i > 0:
                     formatted_reflection = "\n\n" + formatted_reflection
@@ -641,7 +655,7 @@ async def run_evaluation(config: MathConfig, data: DataStore = None):
             messages.append({"role": "user", "content": f"{instruction}"})
             current_attempt.extra_fields['reflection_raw_prompt'] = copy.deepcopy(messages)
             
-            output = await generate_model_output(client, config.model_name, messages, config)
+            output = await generate_model_output(client, config.model_name, messages, config, max_completion_tokens=config.reflection_max_completion_tokens)
             model_output = output.choices[0].message.content
             
             if config.selfrefine:
