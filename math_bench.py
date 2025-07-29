@@ -422,6 +422,8 @@ def merge_same_role_messages(messages):
 
 def format_attempt_content(attempt_content: str, reward: float, config: MathConfig, tokenizer: AutoTokenizer, tag_name: str = "Attempt") -> str:
     """Format attempt content with improved formatting."""
+    # remove the content between <think> and </think>
+    attempt_content = re.sub(r'<think>.*?</think>', '', attempt_content, flags=re.DOTALL)
     # Truncate to last N tokens instead of characters
     tokens = tokenizer.encode(attempt_content)
     if len(tokens) > config.max_attempt_length:
