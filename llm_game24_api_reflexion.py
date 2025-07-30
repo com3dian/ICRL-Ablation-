@@ -27,12 +27,21 @@ rejection_sampling = 0
 
 load_samples = 0
 
+no_think = 1
+think = 0
+
 num_weak_demo = 3000
 
 
-api_eval = True
+api_eval = False  # Set to False to use vLLM instead of OpenAI
 
-client = OpenAI(api_key="Your_API_Key")
+# Initialize vLLM model when not using API
+if not api_eval:
+    llm = LLM(model="Qwen/Qwen3-32B", 
+              tensor_parallel_size=4,  # Adjust based on GPU count
+              gpu_memory_utilization=0.95)
+else:
+    client = OpenAI(api_key="Your_API_Key")
 
 
 text = ""
@@ -61,7 +70,7 @@ from tot.prompts.game24 import (
 
 def evaluate_checkpoint(
     checkpoint_path="game_of_24",
-    base_model_id="GPT-4.1",
+    base_model_id="Qwen/Qwen3-32B",
     max_eval_samples=45,
     n=51,
     max_new_tokens=1000
@@ -118,20 +127,26 @@ def evaluate_checkpoint(
             
             prompt += " Only make one attempt, and put your answer in `<answer>**Response** Step1: ... (left: ...) Step2: ... (left: ...) Step3: ... (left: ...) **Answer**: <math operations of the 4 input numbers, even if it does not equal 24></answer>` format. Whether the Answer is correct or incorrect, do not try again. \n"
 
-            
+            if no_think: 
+                prompt += "/no_think"
+                
             prompt += f"**Prompt**: Input: {sample['question']}\n"
             
             batch_prompts.append(prompt)
         
         
-        model_name = "gpt-4.1"
-    
-            
-        with ThreadPoolExecutor(max_workers=20) as pool:
-            api_outputs = list(pool.map(
-                lambda p: client.responses.create(model=model_name, input=p).output_text,
-                batch_prompts
-            ))
+        if api_eval:
+            # Use OpenAI API for generation
+            model_name = "gpt-4.1"
+            with ThreadPoolExecutor(max_workers=20) as pool:
+                api_outputs = list(pool.map(
+                    lambda p: client.responses.create(model=model_name, input=p).output_text,
+                    batch_prompts
+                ))
+        else:
+            # Use vLLM for generation
+            vllm_outputs = llm.generate(batch_prompts, sampling_params)
+            api_outputs = [output.outputs[0].text for output in vllm_outputs]
         
         eval_prompt_list = []
         eval_prompt_full_answer_list = []
@@ -303,18 +318,27 @@ def evaluate_checkpoint(
                 eval_result_list.append(0)
                 format_reward_list.append(-30.0)
         
+        # Add sampling parameters for evaluation
+        sampling_params_eval = SamplingParams(temperature=0.0, top_p=1.0, max_tokens=1024)
+        
         # eval_model_name = "gpt-4.1-mini"
         eval_model_name = "gpt-4.1"
         
 
         flat_prompts = list(chain.from_iterable(gpt_eval_prompt_list))
 
-        # 2. fire them off in one pool
-        with ThreadPoolExecutor(max_workers=20) as pool:
-            flat_results = list(pool.map(
-                lambda prompt: client.responses.create(model=eval_model_name, input=prompt).output_text,
-                flat_prompts
-            ))
+        if api_eval:
+            # Use OpenAI API for evaluation
+            # 2. fire them off in one pool
+            with ThreadPoolExecutor(max_workers=20) as pool:
+                flat_results = list(pool.map(
+                    lambda prompt: client.responses.create(model=eval_model_name, input=prompt).output_text,
+                    flat_prompts
+                ))
+        else:
+            # Use vLLM for evaluation
+            eval_vllm_outputs = llm.generate(flat_prompts, sampling_params_eval)
+            flat_results = [output.outputs[0].text for output in eval_vllm_outputs]
 
         # 3. reshape back into groups of 4
         group_size = 4
@@ -469,11 +493,17 @@ def evaluate_checkpoint(
             batch_prompts.append(prompt)
                     
 
-        with ThreadPoolExecutor(max_workers=20) as pool:
-            api_outputs = list(pool.map(
-                lambda p: client.responses.create(model=model_name, input=p).output_text,
-                batch_prompts
-            ))
+        if api_eval:
+            # Use OpenAI API for reflexion generation
+            with ThreadPoolExecutor(max_workers=20) as pool:
+                api_outputs = list(pool.map(
+                    lambda p: client.responses.create(model=model_name, input=p).output_text,
+                    batch_prompts
+                ))
+        else:
+            # Use vLLM for reflexion generation
+            reflexion_vllm_outputs = llm.generate(batch_prompts, sampling_params)
+            api_outputs = [output.outputs[0].text for output in reflexion_vllm_outputs]
         
         for i, output_obj in enumerate(api_outputs):
             # Retrieve generated text.
@@ -528,9 +558,9 @@ def evaluate_checkpoint(
 
             this_time_change += f"_evalnum_{max_eval_samples}"
             run = f"{this_time_change}_n_{n}"
-            path = f"/sfs/weka/scratch/ks8vf/ICL/{task}/{base_model_id}/{run}"
+            path = f"/sfs/weka/scratch/ks8vf/code_submission/ICL/{task}/{base_model_id}/{run}"
             
-            path = f"/sfs/weka/scratch/ks8vf/ICL/{task}/{base_model_id}/{run}"
+            path = f"/sfs/weka/scratch/ks8vf/code_submission/ICL/{task}/{base_model_id}/{run}"
             os.makedirs(path, exist_ok=True)
 
             with open(f'{path}/gen_list_n={n}_mt={max_new_tokens}.pkl', "wb") as f:

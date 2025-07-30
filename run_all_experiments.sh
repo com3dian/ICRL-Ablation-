@@ -43,10 +43,10 @@ log_message "Log directory: $LOG_DIR"
 log_message "========================================"
 
 # Run ICRL experiment
-run_experiment "llm_creative_writing_api.py" "ICRL"
+# run_experiment "llm_creative_writing_api.py" "ICRL"
 
 # Add a small delay between experiments to avoid resource conflicts
-sleep 30
+# sleep 30
 
 # Run Self-Refine experiment
 run_experiment "llm_creative_writing_api_self-refine.py" "Self-Refine"
