@@ -48,7 +48,7 @@ elif api_eval:
 elif openrouter_eval:
     # OpenRouter configuration (exactly following math_bench.py)
     OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "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")
-    OPENROUTER_MODEL = "meta-llama/llama-4-maverick"
+    OPENROUTER_MODEL = "microsoft/phi-4"
     openrouter_client = OpenAI(base_url="https://openrouter.ai/api/v1", api_key=OPENROUTER_API_KEY)
 
 
@@ -61,6 +61,11 @@ def openrouter_generate(prompt, temperature=0.6, max_tokens=1000):
             messages=[{"role": "user", "content": prompt}],
             temperature=temperature,
             max_completion_tokens=max_tokens,  # math_bench.py uses max_completion_tokens
+            extra_headers={
+                "HTTP-Referer": "https://github.com/yourusername/yourrepo",
+                "X-Title": "ICRL Creative Writing Reflexion",
+                "X-Precision": "16"  # Set precision to 16 for phi-4
+            }
         )
         return output.choices[0].message.content
     except Exception as e:
@@ -411,7 +416,7 @@ def evaluate_checkpoint(
                 this_time_change += "best_of_n_"
             else:
                 this_time_change += "reflexion_"
-            this_time_change += "new_eval_prompt"
+            this_time_change += "rolling_window"
 
             this_time_change += f"_evalnum_{max_eval_samples}"
             run = f"{this_time_change}_n_{n}"

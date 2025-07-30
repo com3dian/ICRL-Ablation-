@@ -38,7 +38,7 @@ zero_reward = 0
 random_reward = 0  # New ablation: use random rewards from 1-10
 
 exploration_or_exploitation = 0
-num_weak_demo = 3000
+num_weak_demo = 25
 
 load_samples = 0  # Don't load previous samples for testing
 
@@ -56,7 +56,7 @@ elif api_eval:
 elif openrouter_eval:
     # OpenRouter configuration (exactly following math_bench.py)
     OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "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")
-    OPENROUTER_MODEL = "meta-llama/llama-4-maverick"
+    OPENROUTER_MODEL = "microsoft/phi-4"
     openrouter_client = OpenAI(base_url="https://openrouter.ai/api/v1", api_key=OPENROUTER_API_KEY)
 
 
@@ -76,6 +76,11 @@ def openrouter_generate(prompt, temperature=0.6, max_tokens=1000):
             messages=[{"role": "user", "content": prompt}],
             temperature=temperature,
             max_completion_tokens=max_tokens,  # math_bench.py uses max_completion_tokens
+            extra_headers={
+                "HTTP-Referer": "https://github.com/yourusername/yourrepo",
+                "X-Title": "ICRL Creative Writing",
+                "X-Precision": "16"  # Set precision to 16 for phi-4
+            }
         )
         return output.choices[0].message.content
     except Exception as e:
@@ -272,6 +277,8 @@ def evaluate_checkpoint(
                 base_answer = """At dawn, golden light slips past pale curtains, rousing the world in quiet celebration. A lone robin greets the morning with a clear, cheerful trill, its song drifting across dew-laden grass. A gentle breeze stirs the leaves, carrying the fresh, earthy scent of new growth. Nearby, rooftops and empty streets lie poised between night’s calm and the city’s stirring pulse, promising simple comforts like a warm cup of coffee. In this tranquil pause, one senses life’s renewal and the gentle invitation to greet the day with hope and gratitude."""
                 
                 eval_prompt = f"Instruction: You are a seasoned text coherence evaluator. Read the TEXT below and rate the TEXT’s overall coherency on a 1-to-10 scale, where 1 means less coherent than the Base Answer, 5 means as coherent as the Base Answer, and 10 means way more coherent than the Base Answer. Be a strict and conservative evaluator and only gave a high score when the TEXT is truly better than the Base Answer. Base Answer: <<<{base_answer}>>> TEXT:<<<{model_answer}>>> Return your answer in exactly this format: Coherency score: <integer 1-10>. One-shot example: Base Answer: <<<A>>>  TEXT:<<<B>>> Assistant: Coherency score: <integer 1-10>. Reasoning: < 2 concise sentences explaining why you chose that score>\nResponse:"
+                
+                eval_prompt = f"Instruction: You are a seasoned text coherence evaluator. Read the TEXT below and rate the TEXT’s overall coherency on a 1-to-10 scale, where 1 means less coherent than the Base Answer, 5 means as coherent as the Base Answer, and 10 means way more coherent than the Base Answer. Be a strict and conservative evaluator and only gave a high score when the TEXT is truly better than the Base Answer. Base Answer: <<<{base_answer}>>> TEXT:<<<{model_answer}>>> Return your answer in exactly this format: Coherency score: <integer 1-10>. \nResponse:"
 
                 eval_prompt_list.append(eval_prompt)
 
@@ -427,7 +434,7 @@ def evaluate_checkpoint(
                 this_time_change += "random_reward_"
             else:
                 this_time_change += "ICRL_"
-            this_time_change += "Plan_Passage"
+            this_time_change += "rolling_window"
 
             this_time_change += f"_evalnum_{max_eval_samples}"
             run = f"{this_time_change}_n_{n}"
