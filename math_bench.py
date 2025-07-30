@@ -73,6 +73,7 @@ class MathConfig:
     # exploit_only: bool = False # Ablation
     explore_and_exploit: bool = False # Ablation
     neutral_prompt: bool = False # Ablation
+    alternate_prompt: Optional[int] = None # Ablation
     # max_reflections_in_context: Optional[int] = None 
     react: bool = False
     selfrefine: bool = False
@@ -115,6 +116,20 @@ Look at the previous attempts and their rewards. Try to construct a new answer t
 Write your final answer in the format of <answer>...</answer>.
 """
 
+    exploration_alternates: list[str] = (
+        "Review the prior attempts. Produce a fresh solution that is clearly different from every previous one.\nWrite your final answer in the format of <answer>...</answer>.",
+        "Consider all earlier tries and generate a novel answer that does not repeat or closely paraphrase them.\nWrite your final answer in the format of <answer>...</answer>.",
+        "Inspect the earlier answers and craft a distinct solution that meaningfully diverges from each of them.\nWrite your final answer in the format of <answer>...</answer>.",
+        "After reading the previous attempts, propose an alternative approach that explores a new line of reasoning and avoids overlap with any prior answer.\nWrite your final answer in the format of <answer>...</answer>."
+    )
+
+    exploitation_alternates: list[str] = (
+        "Review the previous attempts and their reward scores. Produce an answer expected to outperform all prior scores.\nWrite your final answer in the format of <answer>...</answer>.",
+        "Use the earlier attempts and rewards as guidance to optimize your response; aim to exceed the current best reward.\nWrite your final answer in the format of <answer>...</answer>.",
+        "Analyze the rewards/feedback from previous answers, then craft a response that maximizes the objective and surpasses the best so far.\nWrite your final answer in the format of <answer>...</answer>.",
+        "Given the earlier attempts and their rewards, write an improved answer designed to beat the top score.\nWrite your final answer in the format of <answer>...</answer>."
+    )
+
     explore_and_exploit_instruction: str = """
 You get multiple attempts to complete the task. You can see the previous attempts and their rewards.
 For this attempt, decide whether to try a completely different approach or to improve on a previous attempt. Then, continue to answer the question.
@@ -135,15 +150,6 @@ Before giving your final answer, carefully reason step-by-step:
 
 Then, clearly present your final solution in the format of <answer>...</answer>.
 """
-
-#     do_reflexion_instruction: str = """
-# Review your previous unsuccessful attempt at this math problem. Instead of repeating the solution process, critically analyze:
-# 1. Exactly where you made errors or incorrect assumptions.
-# 2. Which mathematical concepts or steps you misunderstood or misapplied.
-# 3. How these errors impacted your final answer.
-
-# After reflection, write a concise, improved solution strategy that explicitly addresses these issues, ensuring you correctly apply the needed concepts and steps in the future.
-# """
 
     do_reflexion_instruction: str = """
 Explain what went wrong in your previous solution attempt and identify the specific mistake. Then, describe briefly how you will change your approach to avoid that error.
@@ -231,6 +237,10 @@ def parse_args():
         logger.info("*"*100)
         logger.info("Debug run")
         logger.info("*"*100)
+    
+    if config.alternate_prompt is not None:
+        config.exploration_instruction = config.exploration_alternates[config.alternate_prompt]
+        config.exploitation_instruction = config.exploitation_alternates[config.alternate_prompt]
         
     if config.icrl_mode == Methods.RANDOM_SAMPLING:
         config.num_initial_attempts = 0
@@ -353,8 +363,6 @@ class RewardModel:
         #     mock_reward_client(self.score_client)
 
     async def get_reward_for_answer(self, model_output, problem_instance: DataStore.Problem, config: MathConfig):
-        if config.random_rewards:
-            return np.random.uniform(0, 1)
         reference = problem_instance.answer
         model_answer = extract_answer(model_output)
         if model_answer == reference:
@@ -482,7 +490,7 @@ async def generate_model_output(client: AsyncOpenAI, model_name: str, messages: 
                 **kwargs,
             )
             if not config.disable_reasoning:
-                if hasattr(output.choices[0].message, 'reasoning') and len(output.choices[0].message.reasoning) > 20:
+                if hasattr(output.choices[0].message, 'reasoning') and output.choices[0].message.reasoning is not None and len(output.choices[0].message.reasoning) > 20:
                     output.choices[0].message.content = f"<think>\n{output.choices[0].message.reasoning}\n</think>\n\n{output.choices[0].message.content}"
                 else:
                     # remove any <think> or </think> tags
@@ -541,12 +549,19 @@ async def run_evaluation(config: MathConfig, data: DataStore = None):
             model_output = output.choices[0].message.content
             
             reward = await reward_model.get_reward_for_answer(model_output, problem_instance, config)
+
+            if config.random_rewards:
+                real_reward = reward
+                reward = np.random.random()
+            else:
+                real_reward = reward
             
             attempt = DataStore.Attempt(
                 raw_prompt=messages,
                 model_output=model_output,
                 reward=reward,
                 round_idx=-1,
+                extra_fields={"real_reward": real_reward},
             )
             data.problem_histories[problem_idx].attempts.append(attempt)
             
