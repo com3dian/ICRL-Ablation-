@@ -17,7 +17,6 @@ from concurrent.futures import ThreadPoolExecutor
 
 
 from openai import OpenAI
-import requests
 import os
 num_char = 200
 
@@ -55,15 +54,10 @@ elif api_eval:
     # OpenAI API initialization
     client = OpenAI(api_key="Your_API_Key")
 elif openrouter_eval:
-    # OpenRouter configuration
+    # OpenRouter configuration (exactly following math_bench.py)
     OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "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")
-    OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1/chat/completions"
     OPENROUTER_MODEL = "meta-llama/llama-4-maverick"
-    OPENROUTER_HEADERS = {
-        "Authorization": f"Bearer {OPENROUTER_API_KEY}",
-        "HTTP-Referer": "https://github.com/ICRL-LLM-Agent",
-        "X-Title": "ICRL Creative Writing"
-    }
+    openrouter_client = OpenAI(base_url="https://openrouter.ai/api/v1", api_key=OPENROUTER_API_KEY)
 
 
 
@@ -73,26 +67,17 @@ exploitation_instruction = "Instruction: You will be given multiple <attempt>…
 
 explore_or_exploit_instruction = "Instruction: Examine all the `<attempt>…</attempt>` examples, each showing a candidate Response and its Reward. You have two options, exploration or exploitation. For exploration, provide a response that is different from previous attempts demonstrated in the context, and wrap it in `<answer>…</answer>`. For exploitation, make the best educated guess based on the high reward attempts to produce response that can achieve a higher reward, while making sure it correctly follows the task instruction, and put it in `<answer>…</answer>` format. Pick one option to follow."
 
-# Helper function for OpenRouter API calls
+# Helper function for OpenRouter API calls (exactly following math_bench.py pattern)
 def openrouter_generate(prompt, temperature=0.6, max_tokens=1000):
-    """Make a request to OpenRouter API"""
+    """Make a request to OpenRouter API - following math_bench.py"""
     try:
-        response = requests.post(
-            OPENROUTER_BASE_URL,
-            headers=OPENROUTER_HEADERS,
-            json={
-                "model": OPENROUTER_MODEL,
-                "messages": [{"role": "user", "content": prompt}],
-                "temperature": temperature,
-                "max_tokens": max_tokens,
-                "top_p": 0.95,
-                "provider": {
-                    "quantizations": ["fp16"]  # Request fp16 quantization
-                }
-            }
+        output = openrouter_client.chat.completions.create(
+            model=OPENROUTER_MODEL,
+            messages=[{"role": "user", "content": prompt}],
+            temperature=temperature,
+            max_completion_tokens=max_tokens,  # math_bench.py uses max_completion_tokens
         )
-        response.raise_for_status()
-        return response.json()["choices"][0]["message"]["content"]
+        return output.choices[0].message.content
     except Exception as e:
         print(f"OpenRouter API error: {e}")
         return ""
@@ -227,14 +212,14 @@ def evaluate_checkpoint(
         if api_eval:
             # Use OpenAI API for generation
             model_name = "gpt-4.1"
-            with ThreadPoolExecutor(max_workers=10) as pool:
+            with ThreadPoolExecutor(max_workers=20) as pool:
                 api_outputs = list(pool.map(
                     lambda p: client.responses.create(model=model_name, input=p).output_text,
                     batch_prompts
                 ))
         elif openrouter_eval:
             # Use OpenRouter API for generation
-            with ThreadPoolExecutor(max_workers=10) as pool:
+            with ThreadPoolExecutor(max_workers=20) as pool:
                 api_outputs = list(tqdm.tqdm(
                     pool.map(
                         lambda p: openrouter_generate(p, temperature=0.6, max_tokens=max_new_tokens),
@@ -299,14 +284,14 @@ def evaluate_checkpoint(
             if api_eval:
                 # Use OpenAI API for evaluation
                 model_name = "gpt-4.1"
-                with ThreadPoolExecutor(max_workers=10) as pool:
+                with ThreadPoolExecutor(max_workers=20) as pool:
                     eval_result_list = list(pool.map(
                         lambda p: client.responses.create(model=model_name, input=p).output_text,
                         eval_prompt_list
                     ))
             elif openrouter_eval:
                 # Use OpenRouter API for evaluation
-                with ThreadPoolExecutor(max_workers=10) as pool:
+                with ThreadPoolExecutor(max_workers=20) as pool:
                     eval_result_list = list(tqdm.tqdm(
                         pool.map(
                             lambda p: openrouter_generate(p, temperature=0.0, max_tokens=64),
@@ -474,4 +459,4 @@ def evaluate_checkpoint(
 if __name__ == "__main__":
     print("Evaluating checkpoint in batch mode...")
     # Test with fewer rounds to verify implementation
-    evaluate_checkpoint(n=100)  # 100 rounds for full experiment
+    evaluate_checkpoint(n=40)  # 100 rounds for full experiment
