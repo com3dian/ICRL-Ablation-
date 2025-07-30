@@ -72,13 +72,14 @@ def get_sum_df(path):
         # Group attempts by round
         attempts_by_round = defaultdict(list)
         for attempt in problem_history.attempts:
-            attempts_by_round[attempt.round_idx].append(attempt.reward)
+            reward = 1 if attempt.reward > .9 else 0
+            attempts_by_round[attempt.round_idx].append(reward)
         
         # For each round, take the sum/mean of rewards (depending on what makes sense)
         for round_idx in all_rounds:
             if round_idx in attempts_by_round:
                 # Take the mean reward if multiple attempts in the same round
-                dict_data[problem_idx][round_idx] = np.mean(attempts_by_round[round_idx])
+                dict_data[problem_idx][round_idx] = np.max(attempts_by_round[round_idx])
             else:
                 # No attempt in this round for this problem
                 dict_data[problem_idx][round_idx] = 0
@@ -122,18 +123,21 @@ def plot_per_step_running_max(*dfs, **kwargs):
     
     colors = ['b', 'r', 'g', 'c', 'm', 'y', 'k']  # Add more colors if needed
     
+    first_perf = []
     for idx, df in enumerate(dfs):
+        label = kwargs.get(f'label_{idx}', f'Method {idx+1}')
         # create running max df
         df_running_max = df.cummax(axis=0)
         means = df_running_max.mean(axis=1)
+        print(label, means.iloc[-1])
+        first_perf.append(means.iloc[0])
         means = pd.Series(gaussian_filter(means, sigma=1), index=means.index)
         std_devs = df_running_max.std(axis=1)/np.sqrt(len(df))/4
         rounds = df.index
         color = colors[idx % len(colors)]
-        label = kwargs.get(f'label_{idx}', f'Method {idx+1}')
-        print(means)
         ax.plot(rounds, means, f'{color}-', label=label)
         ax.fill_between(rounds, means - std_devs, means + std_devs, alpha=0.3, color=color)
+    print('first perf', np.mean(first_perf))
 
     ax.set_xlabel('Trial Number')
     ax.set_ylabel('Running Max Episode Return')
@@ -245,20 +249,140 @@ def plot_cost_reward_sum(*args, **kwargs):
     plt.show()
 
 #%%
-df_icrl = get_sum_df("/home/jovyan/shared/amoeini/neurips/ICRL-for-LLM-Agent/ICL/math/icrl/20250726_2302")
-df_icrl_2 = get_sum_df("/home/jovyan/shared/amoeini/neurips/ICRL-for-LLM-Agent/ICL/math/icrl/20250727_1630")
+# qwen3.32b
+df_aime = get_sum_df("/home/jovyan/shared/amoeini/neurips/ICRL-for-LLM-Agent/ICL/math/icrl/20250728_0008_aime25_formatted_weird")
+df_aime_local = get_sum_df("/home/jovyan/shared/amoeini/neurips/ICRL-for-LLM-Agent/ICL/math/icrl/20250728_2109_aime_local")
+df_aime_local_notee = get_sum_df("/home/jovyan/shared/amoeini/neurips/ICRL-for-LLM-Agent/ICL/math/icrl/20250729_0118_aime_local_notee")
+df_aime_reflexion_fair = get_sum_df("/home/jovyan/shared/amoeini/neurips/ICRL-for-LLM-Agent/ICL/math/reflexion/20250728_2240_aime_reflexion") #crashed
+df_aime_selfrefine = get_sum_df("/home/jovyan/shared/amoeini/neurips/ICRL-for-LLM-Agent/ICL/math/selfrefine/20250728_2308_aime_selfrefine") #crashed
+df_aime_selfrefine2 = get_sum_df("/home/jovyan/shared/amoeini/neurips/ICRL-for-LLM-Agent/ICL/math/selfrefine/20250729_2045_aime_selfrefine")
+
+df_hmmt_local = get_sum_df("/home/jovyan/shared/amoeini/neurips/ICRL-for-LLM-Agent/ICL/math/icrl/20250728_2235_hmmt")
+df_hmmt_selfrefine_fair = get_sum_df("/home/jovyan/shared/amoeini/neurips/ICRL-for-LLM-Agent/ICL/math/selfrefine/20250728_2308_hmmt_selfrefine") #crashed
+df_hmmt_reflexion = get_sum_df("/home/jovyan/shared/amoeini/neurips/ICRL-for-LLM-Agent/ICL/math/reflexion/20250728_2025_hmmt_reflexion") #crashed
+df_hmmt_reflexion_fair = get_sum_df("/home/jovyan/shared/amoeini/neurips/ICRL-for-LLM-Agent/ICL/math/reflexion/20250728_2325_hmmt_reflexion") #crashed
+
+# qwen3.32b reasoning
+df_aime_reason = get_sum_df("/home/jovyan/shared/amoeini/neurips/ICRL-for-LLM-Agent/ICL/math/icrl/20250728_1719_aime_reason")
+df_aime_reason2 = get_sum_df("/home/jovyan/shared/amoeini/neurips/ICRL-for-LLM-Agent/ICL/math/icrl/20250729_1512_aime_reason")
+df_hmmt_reason = get_sum_df("/home/jovyan/shared/amoeini/neurips/ICRL-for-LLM-Agent/ICL/math/icrl/20250728_2314_hmmt_reason")
+df_hmmt_reason2 = get_sum_df("/home/jovyan/shared/amoeini/neurips/ICRL-for-LLM-Agent/ICL/math/icrl/20250729_1712_hmmt_reason")
+df_aime_reason_reflexion = get_sum_df("/home/jovyan/shared/amoeini/neurips/ICRL-for-LLM-Agent/ICL/math/reflexion/20250728_2127_aime_reason_reflexion") #crashed
+df_hmmt_reason_reflexion = get_sum_df("/home/jovyan/shared/amoeini/neurips/ICRL-for-LLM-Agent/ICL/math/reflexion/20250728_2314_hmmt_reason_reflexion") #crashed
+df_aime_reason_reflextion2 = get_sum_df("/home/jovyan/shared/amoeini/neurips/ICRL-for-LLM-Agent/ICL/math/reflexion/20250729_0434_aime_reason_reflexion") 
+df_hmmt_reason_reflextion2 = get_sum_df("/home/jovyan/shared/amoeini/neurips/ICRL-for-LLM-Agent/ICL/math/reflexion/20250729_0434_hmmt_reason_reflexion")
+df_aime_reason_selfrefine = get_sum_df("/home/jovyan/shared/amoeini/neurips/ICRL-for-LLM-Agent/ICL/math/selfrefine/20250729_0435_aime_reason_selfrefine")
+df_hmmt_reason_selfrefine = get_sum_df("/home/jovyan/shared/amoeini/neurips/ICRL-for-LLM-Agent/ICL/math/selfrefine/20250729_0435_hmmt_reason_selfrefine")
+
+
+# # llama3.3 70b
+# df_hmmt_llama = get_sum_df("/home/jovyan/shared/amoeini/neurips/ICRL-for-LLM-Agent/ICL/math/icrl/20250729_1537_hmmt_llama3.3")
+# df_aime_llama = get_sum_df("/home/jovyan/shared/amoeini/neurips/ICRL-for-LLM-Agent/ICL/math/icrl/20250729_1715_aime_llama3.3")
+# df_hmmt_llama_reflexion = get_sum_df("/home/jovyan/shared/amoeini/neurips/ICRL-for-LLM-Agent/ICL/math/reflexion/20250729_1538_hmmt_llama3.3_reflexion")
+# df_aime_llama_reflexion = get_sum_df("/home/jovyan/shared/amoeini/neurips/ICRL-for-LLM-Agent/ICL/math/reflexion/20250729_1715_aime_llama3.3_reflexion")
+# df_hmmt_llama_selfrefine = get_sum_df("/home/jovyan/shared/amoeini/neurips/ICRL-for-LLM-Agent/ICL/math/selfrefine/20250729_1715_hmmt_llama3.3_selfrefine")
+# df_aime_llama_selfrefine = get_sum_df("/home/jovyan/shared/amoeini/neurips/ICRL-for-LLM-Agent/ICL/math/selfrefine/20250729_1715_aime_llama3.3_selfrefine")
+
+# llama maverick
+df_aime_maverick = get_sum_df("/home/jovyan/shared/amoeini/neurips/ICRL-for-LLM-Agent/ICL/math/icrl/20250729_1837_aime_llama3.3")
+df_aime_maverick_reflexion = get_sum_df("/home/jovyan/shared/amoeini/neurips/ICRL-for-LLM-Agent/ICL/math/reflexion/20250729_1837_aime_llama3.3_reflexion")
+df_aime_maverick_selfrefine = get_sum_df("/home/jovyan/shared/amoeini/neurips/ICRL-for-LLM-Agent/ICL/math/selfrefine/20250729_1902_aime_maverick_selfrefine")
+df_hmmt_maverick = get_sum_df("/home/jovyan/shared/amoeini/neurips/ICRL-for-LLM-Agent/ICL/math/icrl/20250729_1908_hmmt_maverick")
+df_hmmt_maverick_reflexion = get_sum_df("/home/jovyan/shared/amoeini/neurips/ICRL-for-LLM-Agent/ICL/math/reflexion/20250729_1908_hmmt_maverick_reflexion")
+df_hmmt_maverick_selfrefine = get_sum_df("/home/jovyan/shared/amoeini/neurips/ICRL-for-LLM-Agent/ICL/math/selfrefine/20250729_1908_hmmt_maverick_selfrefine")
+
+# phi4
+df_hmmt_phi4 = get_sum_df("/home/jovyan/shared/amoeini/neurips/ICRL-for-LLM-Agent/ICL/math/icrl/20250729_1840_hmmt_phi4")
+df_hmmt_phi4_reflexion = get_sum_df("/home/jovyan/shared/amoeini/neurips/ICRL-for-LLM-Agent/ICL/math/reflexion/20250729_1841_hmmt_phi4_reflexion")
+df_hmmt_phi4_selfrefine = get_sum_df("/home/jovyan/shared/amoeini/neurips/ICRL-for-LLM-Agent/ICL/math/selfrefine/20250729_1841_hmmt_phi4_selfrefine")
+df_aime_phi4 = get_sum_df("/home/jovyan/shared/amoeini/neurips/ICRL-for-LLM-Agent/ICL/math/icrl/20250729_1933_aime_phi4")
+df_aime_phi4_reflexion = get_sum_df("/home/jovyan/shared/amoeini/neurips/ICRL-for-LLM-Agent/ICL/math/reflexion/20250729_1934_aime_phi4_reflexion")
+df_aime_phi4_selfrefine = get_sum_df("/home/jovyan/shared/amoeini/neurips/ICRL-for-LLM-Agent/ICL/math/selfrefine/20250729_1934_aime_phi4_selfrefine")
+
+# ablations
+df_aime_prompt0 = get_sum_df("/home/jovyan/shared/amoeini/neurips/ICRL-for-LLM-Agent/ICL/math/icrl/20250729_2320_aime_prompt0")
+df_aime_prompt1 = get_sum_df("/home/jovyan/shared/amoeini/neurips/ICRL-for-LLM-Agent/ICL/math/icrl/20250729_2320_aime_prompt1")
+df_aime_prompt2 = get_sum_df("/home/jovyan/shared/amoeini/neurips/ICRL-for-LLM-Agent/ICL/math/icrl/20250729_2325_aime_prompt2")
+df_aime_prompt3 = get_sum_df("/home/jovyan/shared/amoeini/neurips/ICRL-for-LLM-Agent/ICL/math/icrl/20250729_2325_aime_prompt3")
+df_aime_random_reward = get_sum_df("/home/jovyan/shared/amoeini/neurips/ICRL-for-LLM-Agent/ICL/math/icrl/20250730_0038_aime_random_reward")
+
 #%%
-df_icrl_2
+data = DataStore.load_data_snapshot("/home/jovyan/shared/amoeini/neurips/ICRL-for-LLM-Agent/ICL/math/icrl/20250729_1512_hmmt_reason")
 #%%
-data0 = DataStore.load_data_snapshot("/home/jovyan/shared/amoeini/neurips/ICRL-for-LLM-Agent/ICL/math/icrl/20250726_2302")
-data1 = DataStore.load_data_snapshot("/home/jovyan/shared/amoeini/neurips/ICRL-for-LLM-Agent/ICL/math/icrl/20250727_1630")
-# %%
-for i in range(len(data0.problem_histories[2].attempts)):
-    attempt = data1.problem_histories[2].attempts[i]
-    print(attempt.round_idx, attempt.reward, '-'*100)
+df_stat = df_aime
+quantiles = df_stat.quantile([0.25, 0.5, 0.75], axis=1)
+print(quantiles)
+print()
+print(df_stat.mean(axis=1))
+#%%
+# Print all raw prompts and model outputs for question 0
+problem_idx = 10  # You can change this to select a different problem
+print("="*100)
+print(f"QUESTION {problem_idx} - PROBLEM:")
+print("="*100)
+problem_text = data.problem_histories[problem_idx].problem.problem
+print(problem_text)
+print(f"\nCorrect Answer: {data.problem_histories[problem_idx].problem.answer}")
+print("\n" + "="*100)
+
+print("\nALL ATTEMPTS FOR QUESTION 0:")
+print("="*100)
+
+for i, attempt in enumerate(data.problem_histories[problem_idx].attempts):
+    print(f"\n{'='*50} ATTEMPT {i+1} (Round {attempt.round_idx}) {'='*50}")
+    print(f"Reward: {attempt.reward}")
+    print("\nRAW PROMPT:")
+    print("-" * 80)
+    for j, message in enumerate(attempt.raw_prompt):
+        print(f"Message {j+1} ({message['role']}):")
+        print(message['content'])
+        print("-" * 40)
+    
+    print("\nMODEL OUTPUT:")
+    print("-" * 80)
     print(attempt.model_output)
-# %%
-for i in range(len(data0.problem_histories[2].attempts)):
-    attempt = data0.problem_histories[2].attempts[i]
-    print(attempt.round_idx, attempt.reward, '-'*100)
-    print(attempt.model_output)
+    print("-" * 80)
+#%% # Qwen3.32b AIME
+plot_per_step_running_max(
+    df_aime, df_aime_local, df_aime_local_notee, df_aime_reflexion_fair, df_aime_selfrefine, df_aime_selfrefine2,
+    label_0="AIME", label_1="AIME Local", label_2="AIME Local Notee", label_3="AIME Reflexion Fair", label_4="AIME Selfrefine", label_5="AIME Selfrefine 2", param=1)
+#%% # Qwen3.32b HMMT
+plot_per_step_running_max(
+    df_hmmt_reflexion, df_hmmt_selfrefine_fair, df_hmmt_reflexion_fair, df_hmmt_local,
+    label_0="HMMT Reflexion", label_1="HMMT Selfrefine Fair", label_2="HMMT Reflexion Fair", label_3="HMMT Local", param=1)
+#%% # Qwen3.32b Reasoning AIME *
+plot_per_step_running_max(
+    df_aime_reason, df_aime_reason2, df_aime_reason_reflexion, df_aime_reason_reflextion2, df_aime_reason_selfrefine,
+    label_0="AIME Reason", label_1="AIME Reason 2", label_2="AIME Reason Reflexion", label_3="AIME Reason Reflexion 2", label_4="AIME Reason Selfrefine", param=1)
+#%% # Qwen3.32b Reasoning HMMT ***
+plot_per_step_running_max(
+    df_hmmt_reason, df_hmmt_reason2, df_hmmt_reason_reflexion, df_hmmt_reason_reflextion2, df_hmmt_reason_selfrefine,
+    label_0="HMMT Reason", label_1="HMMT Reason 2", label_2="HMMT Reason Reflexion", label_3="HMMT Reason Reflexion 2", label_4="HMMT Reason Selfrefine", param=1)
+# #%% # Llama3.3 HMMT
+# plot_per_step_running_max(
+#     df_hmmt_llama, df_hmmt_llama_reflexion, df_hmmt_llama_selfrefine,
+#     label_0="HMMT Llama", label_1="HMMT Llama Reflexion", label_2="HMMT Llama Selfrefine", param=1)
+# #%% # Llama3.3 AIME
+# plot_per_step_running_max(
+#     df_aime_llama, df_aime_llama_reflexion, df_aime_llama_selfrefine,
+#     label_0="AIME Llama", label_1="AIME Llama Reflexion", label_2="AIME Llama Selfrefine", param=1)
+#%% # Llama Maverick AIME
+plot_per_step_running_max(
+    df_aime_maverick, df_aime_maverick_reflexion, df_aime_maverick_selfrefine,
+    label_0="AIME Maverick", label_1="AIME Maverick Reflexion", label_2="AIME Maverick Selfrefine", param=1)
+#%% # Llama Maverick HMMT 
+plot_per_step_running_max(
+    df_hmmt_maverick, df_hmmt_maverick_reflexion, df_hmmt_maverick_selfrefine,
+    label_0="HMMT Maverick", label_1="HMMT Maverick Reflexion", label_2="HMMT Maverick Selfrefine", param=1)
+#%% # Phi4 HMMT 
+plot_per_step_running_max(
+    df_hmmt_phi4, df_hmmt_phi4_reflexion, df_hmmt_phi4_selfrefine,
+    label_0="HMMT Phi4", label_1="HMMT Phi4 Reflexion", label_2="HMMT Phi4 Selfrefine", param=1)
+#%% # Phi4 AIME 
+plot_per_step_running_max(
+    df_aime_phi4, df_aime_phi4_reflexion, df_aime_phi4_selfrefine,
+    label_0="AIME Phi4", label_1="AIME Phi4 Reflexion", label_2="AIME Phi4 Selfrefine", param=1)
+#%% # Ablations
+plot_per_step_running_max(
+    df_aime_prompt0, df_aime_prompt1, df_aime_prompt2, df_aime_prompt3,
+    label_0="AIME Prompt 0", label_1="AIME Prompt 1", label_2="AIME Prompt 2", label_3="AIME Prompt 3", param=1)
