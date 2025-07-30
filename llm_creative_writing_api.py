@@ -17,10 +17,13 @@ from concurrent.futures import ThreadPoolExecutor
 
 
 from openai import OpenAI
+import requests
+import os
 num_char = 200
 
 
 api_eval = False  # Set to False to use vLLM instead of OpenAI
+openrouter_eval = True  # Set to True to use OpenRouter API
 
 
 rejection_sampling = 0
@@ -42,13 +45,25 @@ load_samples = 0  # Don't load previous samples for testing
 
 sort_by_reward = 0
 
-# Initialize vLLM model when not using API
-if not api_eval:
+# Initialize models based on selected backend
+if not api_eval and not openrouter_eval:
+    # vLLM initialization
     llm = LLM(model="Qwen/Qwen3-32B", 
               tensor_parallel_size=2,  # Adjust based on GPU count
               gpu_memory_utilization=0.95)
-else:
+elif api_eval:
+    # OpenAI API initialization
     client = OpenAI(api_key="Your_API_Key")
+elif openrouter_eval:
+    # OpenRouter configuration
+    OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "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")
+    OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1/chat/completions"
+    OPENROUTER_MODEL = "meta-llama/llama-4-maverick"
+    OPENROUTER_HEADERS = {
+        "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+        "HTTP-Referer": "https://github.com/ICRL-LLM-Agent",
+        "X-Title": "ICRL Creative Writing"
+    }
 
 
 
@@ -58,6 +73,29 @@ exploitation_instruction = "Instruction: You will be given multiple <attempt>…
 
 explore_or_exploit_instruction = "Instruction: Examine all the `<attempt>…</attempt>` examples, each showing a candidate Response and its Reward. You have two options, exploration or exploitation. For exploration, provide a response that is different from previous attempts demonstrated in the context, and wrap it in `<answer>…</answer>`. For exploitation, make the best educated guess based on the high reward attempts to produce response that can achieve a higher reward, while making sure it correctly follows the task instruction, and put it in `<answer>…</answer>` format. Pick one option to follow."
 
+# Helper function for OpenRouter API calls
+def openrouter_generate(prompt, temperature=0.6, max_tokens=1000):
+    """Make a request to OpenRouter API"""
+    try:
+        response = requests.post(
+            OPENROUTER_BASE_URL,
+            headers=OPENROUTER_HEADERS,
+            json={
+                "model": OPENROUTER_MODEL,
+                "messages": [{"role": "user", "content": prompt}],
+                "temperature": temperature,
+                "max_tokens": max_tokens,
+                "top_p": 0.95,
+                "provider": {
+                    "quantizations": ["fp16"]  # Request fp16 quantization
+                }
+            }
+        )
+        response.raise_for_status()
+        return response.json()["choices"][0]["message"]["content"]
+    except Exception as e:
+        print(f"OpenRouter API error: {e}")
+        return ""
 
 # Load prompts directly to avoid import issues
 cot_prompt = '''
@@ -93,7 +131,7 @@ def get_task(name):
 
 def evaluate_checkpoint(
     checkpoint_path="creative_writing",
-    base_model_id="Qwen/Qwen3-32B",
+    base_model_id=OPENROUTER_MODEL,
     split="test",
     max_eval_samples=45,
     n=51,
@@ -104,11 +142,10 @@ def evaluate_checkpoint(
     max_eval_samples = num_samples
 
     
-    # Load tokenizer.
-    tokenizer = AutoTokenizer.from_pretrained(base_model_id)
-    
-    
-    sampling_params = SamplingParams(temperature=0.6, top_p=0.95, max_tokens=max_new_tokens)
+    # Load tokenizer only if not using OpenRouter
+    if not openrouter_eval and not api_eval:
+        tokenizer = AutoTokenizer.from_pretrained(base_model_id)
+        sampling_params = SamplingParams(temperature=0.6, top_p=0.95, max_tokens=max_new_tokens)
     
     
     task = get_task("text")
@@ -190,10 +227,21 @@ def evaluate_checkpoint(
         if api_eval:
             # Use OpenAI API for generation
             model_name = "gpt-4.1"
-            with ThreadPoolExecutor(max_workers=12) as pool:
+            with ThreadPoolExecutor(max_workers=10) as pool:
                 api_outputs = list(pool.map(
                     lambda p: client.responses.create(model=model_name, input=p).output_text,
                     batch_prompts
+                ))
+        elif openrouter_eval:
+            # Use OpenRouter API for generation
+            with ThreadPoolExecutor(max_workers=10) as pool:
+                api_outputs = list(tqdm.tqdm(
+                    pool.map(
+                        lambda p: openrouter_generate(p, temperature=0.6, max_tokens=max_new_tokens),
+                        batch_prompts
+                    ),
+                    total=len(batch_prompts),
+                    desc="Generating responses"
                 ))
         else:
             # Use vLLM for generation
@@ -243,17 +291,29 @@ def evaluate_checkpoint(
                 eval_prompt_list.append(eval_prompt)
 
 
-            sampling_params_eval = SamplingParams(temperature=0.0, top_p=1.0, max_tokens=64)
+            if not openrouter_eval and not api_eval:
+                sampling_params_eval = SamplingParams(temperature=0.0, top_p=1.0, max_tokens=64)
 
            
             
             if api_eval:
                 # Use OpenAI API for evaluation
                 model_name = "gpt-4.1"
-                with ThreadPoolExecutor(max_workers=12) as pool:
+                with ThreadPoolExecutor(max_workers=10) as pool:
                     eval_result_list = list(pool.map(
                         lambda p: client.responses.create(model=model_name, input=p).output_text,
                         eval_prompt_list
+                    ))
+            elif openrouter_eval:
+                # Use OpenRouter API for evaluation
+                with ThreadPoolExecutor(max_workers=10) as pool:
+                    eval_result_list = list(tqdm.tqdm(
+                        pool.map(
+                            lambda p: openrouter_generate(p, temperature=0.0, max_tokens=64),
+                            eval_prompt_list
+                        ),
+                        total=len(eval_prompt_list),
+                        desc="Evaluating coherency"
                     ))
             else:
                 # Use vLLM for evaluation
