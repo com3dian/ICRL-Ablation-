@@ -20,6 +20,7 @@ num_char = 200
 
 
 api_eval = False  # Set to False to use vLLM instead of OpenAI
+openrouter_eval = True  # Set to True to use OpenRouter API
 
 
 rejection_sampling = 0
@@ -44,22 +45,45 @@ load_samples = 0  # Don't load previous samples for testing
 
 sort_by_reward = 0
 
-# Initialize vLLM model when not using API
-if not api_eval:
+# Initialize models based on selected backend
+if not api_eval and not openrouter_eval:
+    # vLLM initialization
     llm = LLM(model="Qwen/Qwen3-32B", 
               tensor_parallel_size=2,  # Adjust based on GPU count
               gpu_memory_utilization=0.95)
-else:
+elif api_eval:
+    # OpenAI API initialization
     client = OpenAI(api_key="Your_API_Key")
+elif openrouter_eval:
+    # OpenRouter configuration (exactly following math_bench.py)
+    OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "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")
+    OPENROUTER_MODEL = "meta-llama/llama-4-maverick"
+    openrouter_client = OpenAI(base_url="https://openrouter.ai/api/v1", api_key=OPENROUTER_API_KEY)
 
 if meta_instruction_change: 
-    exploitation_instruction = "Meta Prompt: surpass the highest score observed so far. Review the trials, then output your candidate inside `<response>…</response>`."
-    exploration_instruction = "Meta Prompt: Review every <trial> (response + score). Reply with a new, non‑repeating answer wrapped in `<response>…</response>` tags"
+    exploitation_instruction = "Meta Prompt: surpass the highest score observed so far. Review the trials, then output your candidate inside `<response>Plan:...Passage:...</response>`."
+    exploration_instruction = "Meta Prompt: Review every <trial> (response + score). Reply with a new, non‑repeating answer wrapped in `<response>Plan:...Passage:...</response>` tags"
 else: 
-    exploration_instruction = "Instruction: Examine all the `<trial>…</trial>` examples, each showing a candidate Response and its Score. Provide a response that is different from previous trials demonstrated in the context, and wrap it in `<response>…</response>`."
-    exploitation_instruction = "Instruction: You will be given multiple <trial>…</trial> entries. Each entry contains a candidate Response and its Score. Your task: Based on the previous trials, try your best to produce a response that can achieve a higher score, while making sure it correctly follows the task instruction, and put it in `<response>…</response>` format."
+    exploration_instruction = "Instruction: Examine all the `<trial>…</trial>` examples, each showing a candidate Response and its Score. Provide a response that is different from previous trials demonstrated in the context, and wrap it in `<response>Plan:...Passage:...</response>`."
+    exploitation_instruction = "Instruction: You will be given multiple <trial>…</trial> entries. Each entry contains a candidate Response and its Score. Your task: Based on the previous trials, try your best to produce a response that can achieve a higher score, while making sure it correctly follows the task instruction, and put it in `<response>Plan:...Passage:...</response>` format."
 
 explore_or_exploit_instruction = "Instruction: Examine all the `<trial>…</trial>` examples, each showing a candidate Response and its Score. You have two options, exploration or exploitation. For exploration, provide a response that is different from previous trials demonstrated in the context, and wrap it in `<response>…</response>`. For exploitation, make the best educated guess based on the high score trials to produce response that can achieve a higher score, while making sure it correctly follows the task instruction, and put it in `<response>…</response>` format. Pick one option to follow."
+
+
+# Helper function for OpenRouter API calls (exactly following math_bench.py pattern)
+def openrouter_generate(prompt, temperature=0.6, max_tokens=1000):
+    """Make a request to OpenRouter API - following math_bench.py"""
+    try:
+        output = openrouter_client.chat.completions.create(
+            model=OPENROUTER_MODEL,
+            messages=[{"role": "user", "content": prompt}],
+            temperature=temperature,
+            max_completion_tokens=max_tokens,  # math_bench.py uses max_completion_tokens
+        )
+        return output.choices[0].message.content
+    except Exception as e:
+        print(f"OpenRouter API error: {e}")
+        return ""
 
 
 # Load prompts directly to avoid import issues
@@ -96,7 +120,7 @@ def get_task(name):
 
 def evaluate_checkpoint(
     checkpoint_path="creative_writing",
-    base_model_id="Qwen/Qwen3-32B",
+    base_model_id=OPENROUTER_MODEL,
     split="test",
     max_eval_samples=45,
     n=51,
@@ -107,11 +131,10 @@ def evaluate_checkpoint(
     max_eval_samples = num_samples
 
     
-    # Load tokenizer.
-    tokenizer = AutoTokenizer.from_pretrained(base_model_id)
-    
-    
-    sampling_params = SamplingParams(temperature=0.6, top_p=0.95, max_tokens=max_new_tokens)
+    # Load tokenizer only if not using OpenRouter
+    if not openrouter_eval and not api_eval:
+        tokenizer = AutoTokenizer.from_pretrained(base_model_id)
+        sampling_params = SamplingParams(temperature=0.6, top_p=0.95, max_tokens=max_new_tokens)
     
     
     task = get_task("text")
@@ -193,9 +216,16 @@ def evaluate_checkpoint(
         if api_eval:
             # Use OpenAI API for generation
             model_name = "gpt-4.1"
-            with ThreadPoolExecutor(max_workers=12) as pool:
+            with ThreadPoolExecutor(max_workers=20) as pool:
                 api_outputs = list(pool.map(
                     lambda p: client.responses.create(model=model_name, input=p).output_text,
+                    batch_prompts
+                ))
+        elif openrouter_eval:
+            # Use OpenRouter API for generation
+            with ThreadPoolExecutor(max_workers=20) as pool:
+                api_outputs = list(pool.map(
+                    lambda p: openrouter_generate(p, temperature=0.6, max_tokens=max_new_tokens),
                     batch_prompts
                 ))
         else:
@@ -246,16 +276,24 @@ def evaluate_checkpoint(
                 eval_prompt_list.append(eval_prompt)
 
 
-            sampling_params_eval = SamplingParams(temperature=0.0, top_p=1.0, max_tokens=64)
+            if not openrouter_eval and not api_eval:
+                sampling_params_eval = SamplingParams(temperature=0.0, top_p=1.0, max_tokens=64)
 
            
             
             if api_eval:
                 # Use OpenAI API for evaluation
                 model_name = "gpt-4.1"
-                with ThreadPoolExecutor(max_workers=12) as pool:
+                with ThreadPoolExecutor(max_workers=20) as pool:
                     eval_result_list = list(pool.map(
                         lambda p: client.responses.create(model=model_name, input=p).output_text,
+                        eval_prompt_list
+                    ))
+            elif openrouter_eval:
+                # Use OpenRouter API for evaluation
+                with ThreadPoolExecutor(max_workers=20) as pool:
+                    eval_result_list = list(pool.map(
+                        lambda p: openrouter_generate(p, temperature=0.0, max_tokens=64),
                         eval_prompt_list
                     ))
             else:
@@ -403,4 +441,4 @@ def evaluate_checkpoint(
 if __name__ == "__main__":
     print("Evaluating checkpoint in batch mode...")
     # Test with fewer rounds to verify implementation
-    evaluate_checkpoint(n=100)  # 100 rounds for full experiment
+    evaluate_checkpoint(n=40)  # 100 rounds for full experiment

@@ -61,9 +61,9 @@ elif openrouter_eval:
 
 
 
-exploration_instruction = "Instruction: Examine all the `<attempt>…</attempt>` examples, each showing a candidate Response and its Reward. Provide a response that is different from previous attempts demonstrated in the context, and wrap it in `<answer>…</answer>`."
+exploration_instruction = "Instruction: Examine all the `<attempt>…</attempt>` examples, each showing a candidate Response and its Reward. Provide a response that is different from previous attempts demonstrated in the context, and wrap it in `<answer>Plan:...Passage:...</answer>`."
 
-exploitation_instruction = "Instruction: You will be given multiple <attempt>…</attempt> entries. Each entry contains a candidate Response and its Reward. Your task: Based on the previous attempts, try your best to produce a response that can achieve a higher reward, while making sure it correctly follows the task instruction, and put it in `<answer>…</answer>` format."
+exploitation_instruction = "Instruction: You will be given multiple <attempt>…</attempt> entries. Each entry contains a candidate Response and its Reward. Your task: Based on the previous attempts, try your best to produce a response that can achieve a higher reward, while making sure it correctly follows the task instruction, and put it in `<answer>Plan:...Passage:...</answer>` format."
 
 explore_or_exploit_instruction = "Instruction: Examine all the `<attempt>…</attempt>` examples, each showing a candidate Response and its Reward. You have two options, exploration or exploitation. For exploration, provide a response that is different from previous attempts demonstrated in the context, and wrap it in `<answer>…</answer>`. For exploitation, make the best educated guess based on the high reward attempts to produce response that can achieve a higher reward, while making sure it correctly follows the task instruction, and put it in `<answer>…</answer>` format. Pick one option to follow."
 
@@ -427,7 +427,7 @@ def evaluate_checkpoint(
                 this_time_change += "random_reward_"
             else:
                 this_time_change += "ICRL_"
-            this_time_change += "new_eval_prompt"
+            this_time_change += "Plan_Passage"
 
             this_time_change += f"_evalnum_{max_eval_samples}"
             run = f"{this_time_change}_n_{n}"
