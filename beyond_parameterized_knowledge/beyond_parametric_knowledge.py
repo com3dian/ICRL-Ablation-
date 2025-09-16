@@ -17,6 +17,8 @@ from concurrent.futures import ThreadPoolExecutor
 from sentence_transformers import SentenceTransformer
 import torch.nn.functional as F
 
+from rouge_score import rouge_scorer
+
 embed_model = SentenceTransformer('all-MiniLM-L6-v2')
 
 from openai import OpenAI
@@ -25,9 +27,9 @@ num_char = 200
 
 
 api_eval = True  # Set to False to use vLLM instead of OpenAI
-sentence_transformer_eval = True
+sentence_transformer_eval = False
 openrouter_eval = False  # Set to True to use OpenRouter API
-
+rouge_eval = True 
 
 rejection_sampling = 0
 ICRL = 1
@@ -63,6 +65,8 @@ elif openrouter_eval:
     OPENROUTER_MODEL = "microsoft/phi-4"
     openrouter_client = OpenAI(base_url="https://openrouter.ai/api/v1", api_key=OPENROUTER_API_KEY)
 
+if rouge_eval:
+      rouge_scorer_obj = rouge_scorer.RougeScorer(['rouge1'], use_stemmer=True)
 
 
 exploration_instruction = "Instruction: Examine all the `<attempt>…</attempt>` examples, each showing a candidate Response and its Reward. Provide a response that is different from previous attempts demonstrated in the context, and wrap it in `<answer>...</answer>`."
@@ -198,7 +202,7 @@ def evaluate_checkpoint(
         
         if api_eval:
             # Use OpenAI API for generation
-            model_name = "gpt-4.1"
+            model_name = "gpt-4.1-mini"
             with ThreadPoolExecutor(max_workers=20) as pool:
                 api_outputs = list(pool.map(
                     lambda p: client.responses.create(model=model_name, input=p).output_text,
@@ -275,9 +279,25 @@ def evaluate_checkpoint(
 
             if not openrouter_eval and not api_eval:
                 sampling_params_eval = SamplingParams(temperature=0.0, top_p=1.0, max_tokens=64)
+            
+            
+            if rouge_eval:
+                eval_result_list = []
+                for i, output_obj in enumerate(api_outputs):
+                    # Extract model answer
+                    pattern = re.compile(r'<answer>(.*?)</answer>', re.DOTALL)
+                    try:
+                        model_answer = pattern.findall(output_obj)[0]
+                    except:
+                        model_answer = ""
 
-           
-            if sentence_transformer_eval:
+                    # Calculate ROUGE-1 score
+                    scores = rouge_scorer_obj.score(abstracts[i], model_answer)
+                    rouge1_f1 = scores['rouge1'].fmeasure  # F1 score (0-1 range)
+                    similarity_score = int(rouge1_f1 * 100)  # Convert to 0-100
+                    eval_result_list.append(f"Similarity score: {similarity_score}")
+
+            elif sentence_transformer_eval:
                 eval_result_list = []
                 for pair in eval_prompt_list:
                     similarity = F.cosine_similarity(pair[0].unsqueeze(0),pair[1].unsqueeze(0)).item()
@@ -375,8 +395,8 @@ def evaluate_checkpoint(
             else:
                 if random_reward:
                     eval_prompt_i = ""
-                elif sentence_transformer_eval:
-                    eval_prompt_i = "Sentence Transformer Embeddings"
+                elif sentence_transformer_eval or rouge_eval:
+                    eval_prompt_i = "direct comparison"
                 else:
                     eval_prompt_i = eval_prompt_list[i]
             # Create a weak demo dictionary.
