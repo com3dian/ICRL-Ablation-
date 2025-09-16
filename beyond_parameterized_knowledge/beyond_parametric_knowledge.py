@@ -14,7 +14,10 @@ from transformers import AutoTokenizer
 from vllm import LLM, SamplingParams
 
 from concurrent.futures import ThreadPoolExecutor
+from sentence_transformers import SentenceTransformer
+import torch.nn.functional as F
 
+embed_model = SentenceTransformer('all-MiniLM-L6-v2')
 
 from openai import OpenAI
 import os
@@ -22,6 +25,7 @@ num_char = 200
 
 
 api_eval = True  # Set to False to use vLLM instead of OpenAI
+sentence_transformer_eval = True
 openrouter_eval = False  # Set to True to use OpenRouter API
 
 
@@ -38,7 +42,7 @@ zero_reward = 0
 random_reward = 0  # New ablation: use random rewards from 1-10
 
 exploration_or_exploitation = 0
-num_weak_demo = 25
+num_weak_demo = 1000
 
 load_samples = 0  # Don't load previous samples for testing
 
@@ -194,7 +198,7 @@ def evaluate_checkpoint(
         
         if api_eval:
             # Use OpenAI API for generation
-            model_name = "gpt-4.1-mini"
+            model_name = "gpt-4.1"
             with ThreadPoolExecutor(max_workers=20) as pool:
                 api_outputs = list(pool.map(
                     lambda p: client.responses.create(model=model_name, input=p).output_text,
@@ -237,42 +241,49 @@ def evaluate_checkpoint(
 
                 
                 
+                base_answer_embedding = embed_model.encode(abstracts[i], convert_to_tensor=True)
+                model_answer_embedding = embed_model.encode(model_answer, convert_to_tensor=True)
                 
-
                     
                     
-                base_answer = abstracts[i]
-                eval_prompt = f"Instruction: You are a seasoned text coherence evaluator. Read the TEXT below and rate the TEXT’s overall coherency on a 1-to-10 scale, where 1 means less coherent than the Base Answer, 5 means as coherent as the Base Answer, and 10 means way more coherent than the Base Answer. Be a strict and conservative evaluator and only gave a high score when the TEXT is truly better than the Base Answer. Base Answer: <<<{base_answer}>>> TEXT:<<<{model_answer}>>> Return your answer in exactly this format: Coherency score: <integer 1-10>. One-shot example: Base Answer: <<<A>>>  TEXT:<<<B>>> Assistant: Coherency score: <integer 1-10>. Reasoning: < 2 concise sentences explaining why you chose that score>\nResponse:"
+                # base_answer = abstracts[i]
+                # eval_prompt = f"Instruction: You are a seasoned text coherence evaluator. Read the TEXT below and rate the TEXT’s overall coherency on a 1-to-10 scale, where 1 means less coherent than the Base Answer, 5 means as coherent as the Base Answer, and 10 means way more coherent than the Base Answer. Be a strict and conservative evaluator and only gave a high score when the TEXT is truly better than the Base Answer. Base Answer: <<<{base_answer}>>> TEXT:<<<{model_answer}>>> Return your answer in exactly this format: Coherency score: <integer 1-10>. One-shot example: Base Answer: <<<A>>>  TEXT:<<<B>>> Assistant: Coherency score: <integer 1-10>. Reasoning: < 2 concise sentences explaining why you chose that score>\nResponse:"
                 
-                eval_prompt = (
-                    "You are an expert peer reviewer. Your task is to evaluate how similar two research abstracts are, focusing on meaning rather than wording.\n"
-                    "Use the following rubric (weights in parentheses):\n\n"
-                    "1) Research Topic & Motivation (20)\n"
-                    "2) Problem Statement (20)\n"
-                    "3) Methods / Approach (20)\n"
-                    "4) Results / Findings (20)\n"
-                    "5) Conclusions / Implications (15)\n"
-                    "6) Scope / Limitations (5)\n\n"
-                    "Instructions:\n"
-                    "- Assign partial credit for each category.\n"
-                    "- Add up the weighted scores to produce a final 0–100 similarity score.\n"
-                    "- Base your judgment only on the given texts, not external knowledge.\n"
-                    "- If unsure, penalize conservatively but explain why.\n"
-                    "- Ignore style, length, or grammar; focus only on meaning.\n\n"
-                    f"Base Answer: <<<{base_answer}>>> TEXT:<<<{model_answer}>>> "
-                    "Return your answer in exactly this format: Similarity score: <integer 0-100>. \nResponse:"
-                )
+                # eval_prompt = (
+                #     "You are an expert peer reviewer. Your task is to evaluate how similar two research abstracts are, focusing on meaning rather than wording.\n"
+                #     "Use the following rubric (weights in parentheses):\n\n"
+                #     "1) Research Topic & Motivation (20)\n"
+                #     "2) Problem Statement (20)\n"
+                #     "3) Methods / Approach (20)\n"
+                #     "4) Results / Findings (20)\n"
+                #     "5) Conclusions / Implications (15)\n"
+                #     "6) Scope / Limitations (5)\n\n"
+                #     "Instructions:\n"
+                #     "- Assign partial credit for each category.\n"
+                #     "- Add up the weighted scores to produce a final 0–100 similarity score.\n"
+                #     "- Base your judgment only on the given texts, not external knowledge.\n"
+                #     "- If unsure, penalize conservatively but explain why.\n"
+                #     "- Ignore style, length, or grammar; focus only on meaning.\n\n"
+                #     f"Base Answer: <<<{base_answer}>>> TEXT:<<<{model_answer}>>> "
+                #     "Return your answer in exactly this format: Similarity score: <integer 0-100>. \nResponse:"
+                # )
 
                 
-                eval_prompt_list.append(eval_prompt)
+                # eval_prompt_list.append(eval_prompt)
+                eval_prompt_list.append([base_answer_embedding, model_answer_embedding])
 
 
             if not openrouter_eval and not api_eval:
                 sampling_params_eval = SamplingParams(temperature=0.0, top_p=1.0, max_tokens=64)
 
            
-            
-            if api_eval:
+            if sentence_transformer_eval:
+                eval_result_list = []
+                for pair in eval_prompt_list:
+                    similarity = F.cosine_similarity(pair[0].unsqueeze(0),pair[1].unsqueeze(0)).item()
+                    similarity_score = int(similarity*100)
+                    eval_result_list.append(f"Similarity score: {similarity_score}") 
+            elif api_eval:
                 # Use OpenAI API for evaluation
                 model_name = "gpt-4.1-mini"
                 with ThreadPoolExecutor(max_workers=20) as pool:
@@ -364,6 +375,8 @@ def evaluate_checkpoint(
             else:
                 if random_reward:
                     eval_prompt_i = ""
+                elif sentence_transformer_eval:
+                    eval_prompt_i = "Sentence Transformer Embeddings"
                 else:
                     eval_prompt_i = eval_prompt_list[i]
             # Create a weak demo dictionary.
