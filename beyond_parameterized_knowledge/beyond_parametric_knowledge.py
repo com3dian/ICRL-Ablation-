@@ -31,8 +31,8 @@ sentence_transformer_eval = False
 openrouter_eval = False  # Set to True to use OpenRouter API
 rouge_eval = True 
 
-rejection_sampling = 0
-ICRL = 1
+rejection_sampling = 1
+ICRL = 0
 exploitation_only = 0
 exploration_only_no_reward = 0
 exploration_and_exploitation = 0
@@ -197,6 +197,8 @@ def evaluate_checkpoint(
                     prompt += "Instruction: put your response to the following prompt in `<answer>…</answer>` format."
 
             prompt += f"**Prompt**: {sample['question']}\n"
+            if rejection_sampling: 
+                prompt += "Put your response in `<answer>…</answer>` format."
 
             batch_prompts.append(prompt)
         

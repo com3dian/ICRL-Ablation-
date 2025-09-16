@@ -3,7 +3,8 @@ import numpy as np
 import matplotlib.pyplot as plt
 import argparse
 
-def plot_rewards(json_file):
+def plot_rewards(path):
+    json_file = path + "/output_list.json"
     # Load the output data
     with open(json_file, 'r') as f:
         output_list = json.load(f)
@@ -63,9 +64,9 @@ def plot_rewards(json_file):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument('--json_file', type=str,
-                       default='/sfs/weka/scratch/ks8vf/code_submission/ICL/beyond_parameterized_knowledge/gpt-4.1-mini/ICRL_rolling_window_evalnum_10_n_40/output_list.json',
+    parser.add_argument('--path', type=str,
+                       default='/sfs/weka/scratch/ks8vf/code_submission/ICL/beyond_parameterized_knowledge/gpt-4.1-mini/best_of_n_rolling_window_evalnum_10_n_40',
                        help='Path to output_list.json file')
     args = parser.parse_args()
 
-    plot_rewards(args.json_file)
+    plot_rewards(args.path)
