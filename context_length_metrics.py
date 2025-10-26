@@ -19,7 +19,7 @@ class Config:
         "/home/jovyan/shared/amoeini/neurips/ICRL-for-LLM-Agent/ICL/math/reflexion/20250728_2240_aime_reflexion",
         "/home/jovyan/shared/amoeini/neurips/ICRL-for-LLM-Agent/ICL/math/selfrefine/20250728_2308_aime_selfrefine"
     )
-    target_context_length: int = 8192
+    target_context_length: int = 4096
     model_name: str = "Qwen/Qwen3-32B"
 
 def get_raw_prompt_data(data_path):

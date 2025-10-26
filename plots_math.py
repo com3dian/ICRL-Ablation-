@@ -72,7 +72,9 @@ def get_sum_df(path):
         # Group attempts by round
         attempts_by_round = defaultdict(list)
         for attempt in problem_history.attempts:
-            reward = 1 if attempt.reward > .9 else 0
+            # assert "real_reward" in attempt.extra_fields
+            reward = attempt.extra_fields["real_reward"] if "real_reward" in attempt.extra_fields else attempt.reward
+            reward = 1 if reward > .9 else 0
             attempts_by_round[attempt.round_idx].append(reward)
         
         # For each round, take the sum/mean of rewards (depending on what makes sense)
@@ -129,7 +131,8 @@ def plot_per_step_running_max(*dfs, **kwargs):
         # create running max df
         df_running_max = df.cummax(axis=0)
         means = df_running_max.mean(axis=1)
-        print(label, means.iloc[-1])
+        print(label, means.iloc[-1]) 
+        # continue
         first_perf.append(means.iloc[0])
         means = pd.Series(gaussian_filter(means, sigma=1), index=means.index)
         std_devs = df_running_max.std(axis=1)/np.sqrt(len(df))/4
@@ -273,7 +276,8 @@ df_aime_reason_reflextion2 = get_sum_df("/home/jovyan/shared/amoeini/neurips/ICR
 df_hmmt_reason_reflextion2 = get_sum_df("/home/jovyan/shared/amoeini/neurips/ICRL-for-LLM-Agent/ICL/math/reflexion/20250729_0434_hmmt_reason_reflexion")
 df_aime_reason_selfrefine = get_sum_df("/home/jovyan/shared/amoeini/neurips/ICRL-for-LLM-Agent/ICL/math/selfrefine/20250729_0435_aime_reason_selfrefine")
 df_hmmt_reason_selfrefine = get_sum_df("/home/jovyan/shared/amoeini/neurips/ICRL-for-LLM-Agent/ICL/math/selfrefine/20250729_0435_hmmt_reason_selfrefine")
-
+df_aime_reason_selfrefine_no_think = get_sum_df("/home/jovyan/shared/amoeini/neurips/ICRL-for-LLM-Agent/ICL/math/selfrefine/20250730_2334_6bf_aime_reason_selfrefine")
+df_hmmt_reason_selfrefine_no_think = get_sum_df("/home/jovyan/shared/amoeini/neurips/ICRL-for-LLM-Agent/ICL/math/selfrefine/20250731_0008_528_hmmt_reason_selfrefine")
 
 # # llama3.3 70b
 # df_hmmt_llama = get_sum_df("/home/jovyan/shared/amoeini/neurips/ICRL-for-LLM-Agent/ICL/math/icrl/20250729_1537_hmmt_llama3.3")
@@ -304,10 +308,15 @@ df_aime_prompt0 = get_sum_df("/home/jovyan/shared/amoeini/neurips/ICRL-for-LLM-A
 df_aime_prompt1 = get_sum_df("/home/jovyan/shared/amoeini/neurips/ICRL-for-LLM-Agent/ICL/math/icrl/20250729_2320_aime_prompt1")
 df_aime_prompt2 = get_sum_df("/home/jovyan/shared/amoeini/neurips/ICRL-for-LLM-Agent/ICL/math/icrl/20250729_2325_aime_prompt2")
 df_aime_prompt3 = get_sum_df("/home/jovyan/shared/amoeini/neurips/ICRL-for-LLM-Agent/ICL/math/icrl/20250729_2325_aime_prompt3")
-df_aime_random_reward = get_sum_df("/home/jovyan/shared/amoeini/neurips/ICRL-for-LLM-Agent/ICL/math/icrl/20250730_0038_aime_random_reward")
 
+# df_aime_random_reward = get_sum_df("/home/jovyan/shared/amoeini/neurips/ICRL-for-LLM-Agent/ICL/math/icrl/20250730_0038_aime_random_reward")
+df_aime_random_reward1 = get_sum_df("/home/jovyan/shared/amoeini/neurips/ICRL-for-LLM-Agent/ICL/math/icrl/20250730_1439_15a_aime_random_reward")
+df_aime_random_reward2 = get_sum_df("/home/jovyan/shared/amoeini/neurips/ICRL-for-LLM-Agent/ICL/math/icrl/20250730_1439_170_aime_random_reward")
+df_aime_random_reward3 = get_sum_df("/home/jovyan/shared/amoeini/neurips/ICRL-for-LLM-Agent/ICL/math/icrl/20250730_1439_904_aime_random_reward")
+df_aime_random_reward4 = get_sum_df("/home/jovyan/shared/amoeini/neurips/ICRL-for-LLM-Agent/ICL/math/icrl/20250730_1439_a22_aime_random_reward")
+df_aime_random_reward5 = get_sum_df("/home/jovyan/shared/amoeini/neurips/ICRL-for-LLM-Agent/ICL/math/icrl/20250730_1439_bda_aime_random_reward")
 #%%
-data = DataStore.load_data_snapshot("/home/jovyan/shared/amoeini/neurips/ICRL-for-LLM-Agent/ICL/math/icrl/20250729_1512_hmmt_reason")
+data = DataStore.load_data_snapshot("/home/jovyan/shared/amoeini/neurips/ICRL-for-LLM-Agent/ICL/math/selfrefine/20250730_2234_026_aime_reason_selfrefine")
 #%%
 df_stat = df_aime
 quantiles = df_stat.quantile([0.25, 0.5, 0.75], axis=1)
@@ -352,12 +361,12 @@ plot_per_step_running_max(
     label_0="HMMT Reflexion", label_1="HMMT Selfrefine Fair", label_2="HMMT Reflexion Fair", label_3="HMMT Local", param=1)
 #%% # Qwen3.32b Reasoning AIME *
 plot_per_step_running_max(
-    df_aime_reason, df_aime_reason2, df_aime_reason_reflexion, df_aime_reason_reflextion2, df_aime_reason_selfrefine,
-    label_0="AIME Reason", label_1="AIME Reason 2", label_2="AIME Reason Reflexion", label_3="AIME Reason Reflexion 2", label_4="AIME Reason Selfrefine", param=1)
-#%% # Qwen3.32b Reasoning HMMT ***
-plot_per_step_running_max(
-    df_hmmt_reason, df_hmmt_reason2, df_hmmt_reason_reflexion, df_hmmt_reason_reflextion2, df_hmmt_reason_selfrefine,
-    label_0="HMMT Reason", label_1="HMMT Reason 2", label_2="HMMT Reason Reflexion", label_3="HMMT Reason Reflexion 2", label_4="HMMT Reason Selfrefine", param=1)
+    df_aime_reason, df_aime_reason2, df_aime_reason_reflexion, df_aime_reason_reflextion2, df_aime_reason_selfrefine, df_aime_reason_selfrefine_no_think,
+    label_0="AIME Reason", label_1="AIME Reason 2", label_2="AIME Reason Reflexion", label_3="AIME Reason Reflexion 2", label_4="AIME Reason Selfrefine", label_5="AIME Reason Selfrefine No Think", param=1)
+#%% # Qwen3.32b Reasoning HMMT *
+plot_per_step_running_max(  
+    df_hmmt_reason, df_hmmt_reason2, df_hmmt_reason_reflexion, df_hmmt_reason_reflextion2, df_hmmt_reason_selfrefine, df_hmmt_reason_selfrefine_no_think,
+    label_0="HMMT Reason", label_1="HMMT Reason 2", label_2="HMMT Reason Reflexion", label_3="HMMT Reason Reflexion 2", label_4="HMMT Reason Selfrefine", label_5="HMMT Reason Selfrefine No Think", param=1)
 # #%% # Llama3.3 HMMT
 # plot_per_step_running_max(
 #     df_hmmt_llama, df_hmmt_llama_reflexion, df_hmmt_llama_selfrefine,
@@ -384,5 +393,5 @@ plot_per_step_running_max(
     label_0="AIME Phi4", label_1="AIME Phi4 Reflexion", label_2="AIME Phi4 Selfrefine", param=1)
 #%% # Ablations
 plot_per_step_running_max(
-    df_aime_prompt0, df_aime_prompt1, df_aime_prompt2, df_aime_prompt3,
-    label_0="AIME Prompt 0", label_1="AIME Prompt 1", label_2="AIME Prompt 2", label_3="AIME Prompt 3", param=1)
+    df_aime_prompt0, df_aime_prompt1, df_aime_prompt2, df_aime_prompt3, df_aime_random_reward1, df_aime_random_reward2, df_aime_random_reward3, df_aime_random_reward4, df_aime_random_reward5,
+    label_0="AIME Prompt 0", label_1="AIME Prompt 1", label_2="AIME Prompt 2", label_3="AIME Prompt 3", label_4="AIME Random Reward 1", label_5="AIME Random Reward 2", label_6="AIME Random Reward 3", label_7="AIME Random Reward 4", label_8="AIME Random Reward 5", param=1)

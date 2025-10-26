@@ -33,6 +33,7 @@ from datasets import load_dataset
 from unittest.mock import MagicMock, AsyncMock
 import tiktoken
 from transformers import AutoTokenizer
+import uuid
 
 dotenv.load_dotenv()
 
@@ -256,7 +257,7 @@ def parse_args():
         config.selfrefine = True
         config.no_rewards = True
 
-    postfix = datetime.now().strftime("%Y%m%d_%H%M")
+    postfix = datetime.now().strftime("%Y%m%d_%H%M") + "_" + str(uuid.uuid4())[:3]
     if config.postfix:
         postfix = postfix + "_" + config.postfix
     output_path = Path(base_path) / config.output_path / config.icrl_mode.value / postfix
@@ -435,11 +436,9 @@ def format_attempt_content(attempt_content: str, reward: float, config: MathConf
     # Truncate to last N tokens instead of characters
     tokens = tokenizer.encode(attempt_content)
     if len(tokens) > config.max_attempt_length:
-        # truncated_tokens = tokens[-config.max_attempt_length:]
-        truncated_tokens = tokens[:config.max_attempt_length]
+        # truncated_tokens = tokens[:config.max_attempt_length // 2] + tokenizer.encode("...") + tokens[-config.max_attempt_length // 2:]
+        truncated_tokens = tokens[:config.max_attempt_length] + tokenizer.encode("...")
         attempt_content = tokenizer.decode(truncated_tokens)
-        # attempt_content = "..." + attempt_content
-        attempt_content = attempt_content + "..."
     
     # Replace multiple newlines with single newline
     attempt_content = re.sub(r'\n+', '\n', attempt_content)
@@ -461,7 +460,7 @@ def get_clinet(base_url, model_name):
 
 async def generate_model_output(client: AsyncOpenAI, model_name: str, messages: list[dict], config: MathConfig, **kwargs):
     kwargs["extra_body"] = kwargs.get("extra_body", {})
-    if config.disable_reasoning:
+    if kwargs.pop("disable_reasoning", config.disable_reasoning):
         messages.insert(0, {"role": "system", "content": "/no_think"})
     # if 'openrouter' in str(client.base_url):
     #     kwargs["extra_body"]["provider"] = {
@@ -552,7 +551,7 @@ async def run_evaluation(config: MathConfig, data: DataStore = None):
 
             if config.random_rewards:
                 real_reward = reward
-                reward = np.random.random()
+                reward = np.random.choice([0, 1])
             else:
                 real_reward = reward
             
@@ -628,12 +627,19 @@ async def run_evaluation(config: MathConfig, data: DataStore = None):
             model_output = output.choices[0].message.content
             
             reward = await reward_model.get_reward_for_answer(model_output, data.problem_histories[problem_idx].problem, config)
+
+            if config.random_rewards:
+                real_reward = reward
+                reward = np.random.choice([0, 1])
+            else:
+                real_reward = reward
             
             data.problem_histories[problem_idx].attempts.append(DataStore.Attempt(
                 raw_prompt=messages,
                 model_output=model_output,
                 reward=reward,
                 round_idx=round_idx,
+                extra_fields={"real_reward": real_reward},
             ))
 
             if problem_idx == 0:
@@ -672,11 +678,18 @@ async def run_evaluation(config: MathConfig, data: DataStore = None):
             
             reward = await reward_model.get_reward_for_answer(model_output, data.problem_histories[problem_idx].problem, config)
             
+            if config.random_rewards:
+                real_reward = reward
+                reward = np.random.choice([0, 1])
+            else:
+                real_reward = reward
+            
             current_attempt = DataStore.Attempt(
                 raw_prompt=copy.deepcopy(messages),
                 model_output=model_output,
                 reward=reward,
                 round_idx=round_idx,
+                extra_fields={"real_reward": real_reward},
             )
             data.problem_histories[problem_idx].attempts.append(current_attempt)
 
@@ -685,15 +698,16 @@ async def run_evaluation(config: MathConfig, data: DataStore = None):
 
             # reflection
             messages.append({"role": "assistant", "content": f"{model_output}\n**Reward:** {reward}\n"})
+            model_solution_output = model_output
             messages.append({"role": "user", "content": f"{reflection_instruction}"})
             current_attempt.extra_fields['reflection_raw_prompt'] = copy.deepcopy(messages)
             
-            output = await generate_model_output(client, config.model_name, messages, config, max_completion_tokens=config.reflection_max_completion_tokens)
+            output = await generate_model_output(client, config.model_name, messages, config, max_completion_tokens=config.reflection_max_completion_tokens, disable_reasoning=True)
             model_output = output.choices[0].message.content
             
             if config.selfrefine:
                 reflection = "<Attempt>\n"
-                reflection += current_attempt.extra_fields['reflection_raw_prompt'][-1]['content']
+                reflection += model_solution_output
                 reflection += "\n</Attempt>"
                 reflection += "\n" + model_output
             else:
