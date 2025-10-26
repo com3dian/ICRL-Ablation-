@@ -37,29 +37,48 @@ def get_task(name):
 task = get_task("text")
 print(f"Loaded {len(task)} creative-writing instructions.\n")
 
-method = "self-refine"
-method = "ICRL"
+
 method = "diff-prompts"
 method = "random-rewards"
 method = "reflexion"
 method = "parallel-scaling"
 
+method = "ICRL_no_think"
+
+method = "reflexion"
+method = "diff-prompts"
+method = "random-rewards"
+
+
+
+method = "self-refine"
+method = "ICRL"
+
+method = "base"
+method = "reflexion"
 # load responses for self-refine
 # path = "/sfs/weka/scratch/ks8vf/ICL/creative_writing_api/Qwen/Qwen3-32B/self_refine_seperate_run_evalnum_100_n_100/output_list.json"
 
 # load responses for ICRL
 if method == "ICRL":
-    path = "/sfs/weka/scratch/ks8vf/code_submission/ICL/creative_writing_api/Qwen/Qwen3-32B/ICRL_new_eval_prompt_evalnum_100_n_100/output_list.json"
+    path = "/sfs/weka/scratch/ks8vf/code_submission/ICL/creative_writing_api/meta-llama/llama-4-maverick/ICRL_Plan_Passage_evalnum_100_n_40/output_list.json"
 elif method == "self-refine":
-    path = "/sfs/weka/scratch/ks8vf/ICL/creative_writing_api/Qwen/Qwen3-32B/self_refine_seperate_run_evalnum_100_n_100/output_list.json"
+    path = "/sfs/weka/scratch/ks8vf/ICL/creative_writing_api/meta-llama/llama-4-maverick/self_refine_seperate_run_evalnum_100_n_100/output_list.json"
 elif method == "diff-prompts":
     path = "/sfs/weka/scratch/ks8vf/code_submission/ICL/creative_writing_api/Qwen/Qwen3-32B/ICRL_different_prompts_evalnum_100_n_100/output_list.json"
 elif method == "random-rewards": 
     path = "/sfs/weka/scratch/ks8vf/code_submission/ICL/creative_writing_api/Qwen/Qwen3-32B/random_reward_new_eval_prompt_evalnum_100_n_100/output_list.json"
 elif method == "reflexion": 
-    path = "/sfs/weka/scratch/ks8vf/code_submission/ICL/creative_writing_api/Qwen/Qwen3-32B/reflexion_new_eval_prompt_evalnum_100_n_100/output_list.json"
+    path = "/sfs/weka/scratch/ks8vf/code_submission/ICL/creative_writing_api/meta-llama/llama-4-maverick/reflexion_new_eval_prompt_evalnum_100_n_40/output_list.json"
 elif method == "parallel-scaling":
     path = "/sfs/weka/scratch/ks8vf/code_submission/ICL/creative_writing_api/Qwen/Qwen3-32B/ICRL_parallel_scaling_evalnum_100_parallel_5_n_100/output_list.json"
+elif method == "ICRL_no_think":
+    path = "/sfs/weka/scratch/ks8vf/code_submission/ICL/creative_writing_api/Qwen/Qwen3-32B/ICRL_no_think_evalnum_100_n_100/output_list.json"
+elif method == "base":
+    path = "/sfs/weka/scratch/ks8vf/ICL/creative_writing_api/meta-llama/llama-4-maverick/self_refine_seperate_run_evalnum_100_n_100/output_list.json"
+    
+    
+    
     
 with open(path, 'r') as f:
     output = json.load(f)
@@ -68,7 +87,7 @@ best_responses = []
 for q_idx, question in enumerate(output[:]):
     # Get all trials with their rewards
     trials_with_rewards = []
-    for trial in question[:30]:
+    for trial in question[:40]:
         trials_with_rewards.append((float(trial['reward']), trial))
     
     # Sort by reward (highest first)
@@ -117,7 +136,9 @@ for idx in tqdm(range(num_valid_responses)):
     entries.append(entry)
 
 
-with open(f"/sfs/weka/scratch/ks8vf/code_submission/ICRL/qwen3_32b_{method}_responses.json", "w") as f:
+with open(f"/sfs/weka/scratch/ks8vf/code_submission/ICRL/llama4_{method}_responses.json", "w") as f:
     json.dump(entries, f, indent=2)
+    
 
-print(f"Successfully saved {len(entries)} entries to qwen3_32b_{method}_responses.json")
+
+print(f"Successfully saved {len(entries)} entries to llama4_{method}_responses.json")

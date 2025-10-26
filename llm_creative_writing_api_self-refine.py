@@ -17,11 +17,13 @@ from concurrent.futures import ThreadPoolExecutor
 
 
 from openai import OpenAI
+import os
 
 num_char = 200
 
 
 api_eval = False  # Set to False to use vLLM instead of OpenAI
+openrouter_eval = True  # Set to True to use OpenRouter API
 
 
 rejection_sampling = 0
@@ -29,18 +31,45 @@ rejection_sampling = 0
 load_samples = 0  # Don't load previous samples for testing
 
 num_weak_demos = 3000
-num_weak_demo = 3000
+num_weak_demo = 10
 
 
 
-# Initialize vLLM model when not using API
-if not api_eval:
+# Initialize models based on selected backend
+if not api_eval and not openrouter_eval:
+    # vLLM initialization
     llm = LLM(model="Qwen/Qwen3-32B", 
               tensor_parallel_size=2,  # Adjust based on GPU count
               gpu_memory_utilization=0.95)
-else:
+elif api_eval:
+    # OpenAI API initialization
     client = OpenAI(api_key="Your_API_Key")
+elif openrouter_eval:
+    # OpenRouter configuration (exactly following math_bench.py)
+    OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "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")
+    OPENROUTER_MODEL = "microsoft/phi-4"
+    openrouter_client = OpenAI(base_url="https://openrouter.ai/api/v1", api_key=OPENROUTER_API_KEY)
 
+
+# Helper function for OpenRouter API calls (exactly following math_bench.py pattern)
+def openrouter_generate(prompt, temperature=0.6, max_tokens=1000):
+    """Make a request to OpenRouter API - following math_bench.py"""
+    try:
+        output = openrouter_client.chat.completions.create(
+            model=OPENROUTER_MODEL,
+            messages=[{"role": "user", "content": prompt}],
+            temperature=temperature,
+            max_completion_tokens=max_tokens,  # math_bench.py uses max_completion_tokens
+            extra_headers={
+                "HTTP-Referer": "https://github.com/yourusername/yourrepo",
+                "X-Title": "ICRL Creative Writing Self-Refine",
+                "X-Precision": "16"  # Set precision to 16 for phi-4
+            }
+        )
+        return output.choices[0].message.content
+    except Exception as e:
+        print(f"OpenRouter API error: {e}")
+        return ""
 
 
 # Load prompts directly to avoid import issues
@@ -77,7 +106,7 @@ def get_task(name):
 
 def evaluate_checkpoint(
     checkpoint_path="creative_writing",
-    base_model_id="Qwen/Qwen3-32B",
+    base_model_id=OPENROUTER_MODEL,
     max_eval_samples=45,
     n=51,
     max_new_tokens=1000
@@ -86,10 +115,10 @@ def evaluate_checkpoint(
     
     max_eval_samples = num_samples
     
-    # Load tokenizer.
-    tokenizer = AutoTokenizer.from_pretrained(base_model_id)
-    
-    sampling_params = SamplingParams(temperature=0.6, top_p=0.95, max_tokens=max_new_tokens)
+    # Load tokenizer only if not using OpenRouter
+    if not openrouter_eval and not api_eval:
+        tokenizer = AutoTokenizer.from_pretrained(base_model_id)
+        sampling_params = SamplingParams(temperature=0.6, top_p=0.95, max_tokens=max_new_tokens)
     
     # Prepare a list for all samples that meet the criteria.
     # Each entry stores the question, a history of weak demos, and outputs per round.
@@ -156,9 +185,16 @@ def evaluate_checkpoint(
         if api_eval:
             # Use OpenAI API for generation
             model_name = "gpt-4.1"
-            with ThreadPoolExecutor(max_workers=12) as pool:
+            with ThreadPoolExecutor(max_workers=20) as pool:
                 api_outputs = list(pool.map(
                     lambda p: client.responses.create(model=model_name, input=p).output_text,
+                    batch_prompts
+                ))
+        elif openrouter_eval:
+            # Use OpenRouter API for generation
+            with ThreadPoolExecutor(max_workers=20) as pool:
+                api_outputs = list(pool.map(
+                    lambda p: openrouter_generate(p, temperature=0.6, max_tokens=max_new_tokens),
                     batch_prompts
                 ))
         else:
@@ -206,21 +242,29 @@ def evaluate_checkpoint(
                     
                 base_answer = """At dawn, golden light slips past pale curtains, rousing the world in quiet celebration. A lone robin greets the morning with a clear, cheerful trill, its song drifting across dew-laden grass. A gentle breeze stirs the leaves, carrying the fresh, earthy scent of new growth. Nearby, rooftops and empty streets lie poised between night’s calm and the city’s stirring pulse, promising simple comforts like a warm cup of coffee. In this tranquil pause, one senses life’s renewal and the gentle invitation to greet the day with hope and gratitude."""
                 
-                eval_prompt = f"Instruction: You are a seasoned text coherence evaluator. Read the TEXT below and rate the TEXT's overall coherency on a 1-to-10 scale, where 1 means less coherent than the Base Answer, 5 means as coherent as the Base Answer, and 10 means way more coherent than the Base Answer. Be a strict and conservative evaluator and only gave a high score when the TEXT is truly better than the Base Answer. Base Answer: <<<{base_answer}>>> TEXT:<<<{model_answer}>>> Return your answer in exactly this format: Coherency score: <integer 1-10>. One-shot example: Base Answer: <<<A>>>  TEXT:<<<B>>> Assistant: Coherency score: <integer 1-10>. Reasoning: <2 concise sentences explaining why you chose that score>\nResponse:"
+                eval_prompt = f"Instruction: You are a seasoned text coherence evaluator. Read the TEXT below and rate the TEXT's overall coherency on a 1-to-10 scale, where 1 means less coherent than the Base Answer, 5 means as coherent as the Base Answer, and 10 means way more coherent than the Base Answer. Be a strict and conservative evaluator and only gave a high score when the TEXT is truly better than the Base Answer. Base Answer: <<<{base_answer}>>> TEXT:<<<{model_answer}>>> Return your answer in exactly this format: Coherency score: <integer 1-10>. \nResponse:"
                 
                 eval_prompt_list.append(eval_prompt)
 
 
-            sampling_params_eval = SamplingParams(temperature=0.0, top_p=1.0, max_tokens=64)
+            if not openrouter_eval and not api_eval:
+                sampling_params_eval = SamplingParams(temperature=0.0, top_p=1.0, max_tokens=64)
 
            
             
             if api_eval:
                 # Use OpenAI API for evaluation
                 model_name = "gpt-4.1"
-                with ThreadPoolExecutor(max_workers=12) as pool:
+                with ThreadPoolExecutor(max_workers=20) as pool:
                     eval_result_list = list(pool.map(
                         lambda p: client.responses.create(model=model_name, input=p).output_text,
+                        eval_prompt_list
+                    ))
+            elif openrouter_eval:
+                # Use OpenRouter API for evaluation
+                with ThreadPoolExecutor(max_workers=20) as pool:
+                    eval_result_list = list(pool.map(
+                        lambda p: openrouter_generate(p, temperature=0.0, max_tokens=64),
                         eval_prompt_list
                     ))
             else:
@@ -347,9 +391,17 @@ def evaluate_checkpoint(
         if api_eval:
             # Use OpenAI API for reflexion generation
             model_name = "gpt-4.1"
-            with ThreadPoolExecutor(max_workers=12) as pool:
+            with ThreadPoolExecutor(max_workers=20) as pool:
                 api_outputs = list(pool.map(
                     lambda p: client.responses.create(model=model_name, input=p).output_text,
+                    batch_prompts
+                ))
+        elif openrouter_eval:
+            # Use OpenRouter API for reflexion generation
+            max_token_reflexion = 256
+            with ThreadPoolExecutor(max_workers=20) as pool:
+                api_outputs = list(pool.map(
+                    lambda p: openrouter_generate(p, temperature=0.6, max_tokens=max_token_reflexion),
                     batch_prompts
                 ))
         else:
@@ -401,7 +453,7 @@ def evaluate_checkpoint(
                 this_time_change += "best_of_n_"
             else:
                 this_time_change += "self_refine_"
-            this_time_change += "seperate_run"
+            this_time_change += "rolling_window"
 
             this_time_change += f"_evalnum_{max_eval_samples}"
             run = f"{this_time_change}_n_{n}"
@@ -433,5 +485,5 @@ def evaluate_checkpoint(
 if __name__ == "__main__":
     print("Evaluating checkpoint in batch mode...")
     # Test with fewer rounds to verify implementation
-    evaluate_checkpoint(n=100)  # 100 rounds for full experiment
+    evaluate_checkpoint(n=40)  # 100 rounds for full experiment
     # main()
