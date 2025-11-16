@@ -68,7 +68,7 @@ class MathConfig:
     debug_run: bool = False
     max_attempts_in_context: Optional[int] = None # Ablation
     # zero_out_rewards: bool = False # Ablation
-    random_rewards: bool = False # Ablation
+    random_rewards: float = 0.0 # Ablation - 0.0 = never, 1.0 = always
     # no_rewards: bool = False # Ablation
     # explore_only: bool = False # Ablation
     # exploit_only: bool = False # Ablation
@@ -90,8 +90,8 @@ class MathConfig:
     
     # Model configuration
     model_name: str = "Qwen/Qwen3-32B"
-    # vllm_address: str = "http://localhost:11435/v1"
-    vllm_address: str = "https://openrouter.ai/api/v1"
+    vllm_address: str = "http://localhost:11435/v1"
+    # vllm_address: str = "https://openrouter.ai/api/v1"
     vllm_context_size: int = 32768
     score_model_name: str = "virtuoussy/Qwen2.5-7B-Instruct-RLVR"
     score_vllm_address: str = "http://localhost:11436/v1"
@@ -549,11 +549,9 @@ async def run_evaluation(config: MathConfig, data: DataStore = None):
             
             reward = await reward_model.get_reward_for_answer(model_output, problem_instance, config)
 
-            if config.random_rewards:
-                real_reward = reward
-                reward = np.random.choice([0, 1])
-            else:
-                real_reward = reward
+            real_reward = reward
+            if config.random_rewards > 0 and np.random.random() < config.random_rewards:
+                reward = 1 - reward
             
             attempt = DataStore.Attempt(
                 raw_prompt=messages,
@@ -628,11 +626,9 @@ async def run_evaluation(config: MathConfig, data: DataStore = None):
             
             reward = await reward_model.get_reward_for_answer(model_output, data.problem_histories[problem_idx].problem, config)
 
-            if config.random_rewards:
-                real_reward = reward
-                reward = np.random.choice([0, 1])
-            else:
-                real_reward = reward
+            real_reward = reward
+            if config.random_rewards > 0 and np.random.random() < config.random_rewards:
+                reward = 1 - reward
             
             data.problem_histories[problem_idx].attempts.append(DataStore.Attempt(
                 raw_prompt=messages,
@@ -678,11 +674,9 @@ async def run_evaluation(config: MathConfig, data: DataStore = None):
             
             reward = await reward_model.get_reward_for_answer(model_output, data.problem_histories[problem_idx].problem, config)
             
-            if config.random_rewards:
-                real_reward = reward
-                reward = np.random.choice([0, 1])
-            else:
-                real_reward = reward
+            real_reward = reward
+            if config.random_rewards > 0 and np.random.random() < config.random_rewards:
+                reward = 1 - reward
             
             current_attempt = DataStore.Attempt(
                 raw_prompt=copy.deepcopy(messages),

@@ -27,9 +27,8 @@ python3 sciworld.py icrl_mode=ICRL num_envs=29 max_attempts_in_context=3 postfix
 # math
 
 vllm serve Qwen/Qwen3-32B --dtype auto --api-key hi -tp 4 --gpu-memory-utilization 0.65 --port 11435
-vllm serve microsoft/phi-4 --dtype auto --api-key hi -tp 4 --gpu-memory-utilization 0.65 --port 11435
+vllm serve Qwen/Qwen3-32B --dtype auto --api-key hi -dp 6 --gpu-memory-utilization 0.95 --port 11435
 vllm serve virtuoussy/Qwen2.5-7B-Instruct-RLVR --dtype auto --api-key hi -tp 4 --gpu-memory-utilization 0.3 --port 11436 --max_model_len 2048
-
 vllm serve virtuoussy/Qwen2.5-7B-Instruct-RLVR --dtype auto --api-key hi -tp 2 --gpu-memory-utilization 0.95 --port 11436 --max_model_len 4096
 
 # qwen3.32b no reasoning
@@ -72,4 +71,5 @@ python3 math_bench.py dataset_name=MathArena/aime_2025 postfix=aime_prompt1 disa
 python3 math_bench.py dataset_name=MathArena/aime_2025 postfix=aime_prompt2 disable_reasoning=true alternate_prompt=2 vllm_address=http://localhost:11435/v1
 python3 math_bench.py dataset_name=MathArena/aime_2025 postfix=aime_prompt3 disable_reasoning=true alternate_prompt=3 vllm_address=http://localhost:11435/v1
 
-python3 math_bench.py dataset_name=MathArena/aime_2025 postfix=aime_random_reward disable_reasoning=true random_rewards=true vllm_address=http://localhost:11435/v1
+python3 math_bench.py dataset_name=MathArena/aime_2025 postfix=aime_random_reward2 disable_reasoning=true random_rewards=0.2 
+python3 math_bench.py dataset_name=MathArena/aime_2025 postfix=aime_random_reward5 disable_reasoning=true random_rewards=0.5 
