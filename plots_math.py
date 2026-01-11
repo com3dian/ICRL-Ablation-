@@ -315,6 +315,15 @@ df_aime_random_reward2 = get_sum_df("/home/jovyan/shared/amoeini/neurips/ICRL-fo
 df_aime_random_reward3 = get_sum_df("/home/jovyan/shared/amoeini/neurips/ICRL-for-LLM-Agent/ICL/math/icrl/20250730_1439_904_aime_random_reward")
 df_aime_random_reward4 = get_sum_df("/home/jovyan/shared/amoeini/neurips/ICRL-for-LLM-Agent/ICL/math/icrl/20250730_1439_a22_aime_random_reward")
 df_aime_random_reward5 = get_sum_df("/home/jovyan/shared/amoeini/neurips/ICRL-for-LLM-Agent/ICL/math/icrl/20250730_1439_bda_aime_random_reward")
+
+df_aime_random_reward_20_percent = get_sum_df("/home/jovyan/shared/amoeini/neurips/ICRL-for-LLM-Agent/ICL/math/icrl/20251115_2142_1f1_aime_random_reward2")
+df_aime_random_reward_50_percent = get_sum_df("/home/jovyan/shared/amoeini/neurips/ICRL-for-LLM-Agent/ICL/math/icrl/20251115_2142_024_aime_random_reward5")
+df_aime_random_reward_20_percent_2 = get_sum_df("/home/jovyan/shared/amoeini/neurips/ICRL-for-LLM-Agent/ICL/math/icrl/20251116_1645_2a9_aime_random_reward2")
+df_aime_random_reward_50_percent_2 = get_sum_df("/home/jovyan/shared/amoeini/neurips/ICRL-for-LLM-Agent/ICL/math/icrl/20251116_1645_b3c_aime_random_reward5")
+
+df_aime_no_reward_label = get_sum_df("/home/jovyan/shared/amoeini/neurips/ICRL-for-LLM-Agent/ICL/math/icrl/20251116_1717_65c_aime_no_reward_label")
+df_aime_reward_first = get_sum_df("/home/jovyan/shared/amoeini/neurips/ICRL-for-LLM-Agent/ICL/math/icrl/20251116_1756_def_aime_reward_first")
+
 #%%
 data = DataStore.load_data_snapshot("/home/jovyan/shared/amoeini/neurips/ICRL-for-LLM-Agent/ICL/math/selfrefine/20250730_2234_026_aime_reason_selfrefine")
 #%%
@@ -393,5 +402,6 @@ plot_per_step_running_max(
     label_0="AIME Phi4", label_1="AIME Phi4 Reflexion", label_2="AIME Phi4 Selfrefine", param=1)
 #%% # Ablations
 plot_per_step_running_max(
-    df_aime_prompt0, df_aime_prompt1, df_aime_prompt2, df_aime_prompt3, df_aime_random_reward1, df_aime_random_reward2, df_aime_random_reward3, df_aime_random_reward4, df_aime_random_reward5,
-    label_0="AIME Prompt 0", label_1="AIME Prompt 1", label_2="AIME Prompt 2", label_3="AIME Prompt 3", label_4="AIME Random Reward 1", label_5="AIME Random Reward 2", label_6="AIME Random Reward 3", label_7="AIME Random Reward 4", label_8="AIME Random Reward 5", param=1)
+    df_aime_prompt0, df_aime_prompt1, df_aime_prompt2, df_aime_prompt3, df_aime_random_reward1, df_aime_random_reward2, df_aime_random_reward3, df_aime_random_reward4, df_aime_random_reward5, df_aime_random_reward_20_percent, df_aime_random_reward_50_percent, df_aime_random_reward_20_percent_2, df_aime_random_reward_50_percent_2,
+    df_aime_no_reward_label, df_aime_reward_first,
+    label_0="AIME Prompt 0", label_1="AIME Prompt 1", label_2="AIME Prompt 2", label_3="AIME Prompt 3", label_4="AIME Random Reward 1", label_5="AIME Random Reward 2", label_6="AIME Random Reward 3", label_7="AIME Random Reward 4", label_8="AIME Random Reward 5", label_9="AIME Random Reward 20%", label_10="AIME Random Reward 50%", label_11="AIME Random Reward 20% 2", label_12="AIME Random Reward 50% 2", label_13="AIME No Reward Label", label_14="AIME Reward First", param=1)

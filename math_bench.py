@@ -102,6 +102,8 @@ class MathConfig:
     context_size_safety_margin: int = 75
     max_attempt_length: int = 512
     reflection_max_completion_tokens: int = 512
+    label_name: str = "Achieved score"
+    reward_first: bool = False   
 
     checkpoint_path: Optional[str] = None
     
@@ -121,14 +123,16 @@ Write your final answer in the format of <answer>...</answer>.
         "Review the prior attempts. Produce a fresh solution that is clearly different from every previous one.\nWrite your final answer in the format of <answer>...</answer>.",
         "Consider all earlier tries and generate a novel answer that does not repeat or closely paraphrase them.\nWrite your final answer in the format of <answer>...</answer>.",
         "Inspect the earlier answers and craft a distinct solution that meaningfully diverges from each of them.\nWrite your final answer in the format of <answer>...</answer>.",
-        "After reading the previous attempts, propose an alternative approach that explores a new line of reasoning and avoids overlap with any prior answer.\nWrite your final answer in the format of <answer>...</answer>."
+        "After reading the previous attempts, propose an alternative approach that explores a new line of reasoning and avoids overlap with any prior answer.\nWrite your final answer in the format of <answer>...</answer>.",
+        "After reading the previous attempts, propose an alternative approach that explores a new line of reasoning and avoids overlap with any prior answer.\nWrite your final answer in the format of <answer>...</answer>.", # the no reference to reward prompt
     )
 
     exploitation_alternates: list[str] = (
         "Review the previous attempts and their reward scores. Produce an answer expected to outperform all prior scores.\nWrite your final answer in the format of <answer>...</answer>.",
         "Use the earlier attempts and rewards as guidance to optimize your response; aim to exceed the current best reward.\nWrite your final answer in the format of <answer>...</answer>.",
         "Analyze the rewards/feedback from previous answers, then craft a response that maximizes the objective and surpasses the best so far.\nWrite your final answer in the format of <answer>...</answer>.",
-        "Given the earlier attempts and their rewards, write an improved answer designed to beat the top score.\nWrite your final answer in the format of <answer>...</answer>."
+        "Given the earlier attempts and their rewards, write an improved answer designed to beat the top score.\nWrite your final answer in the format of <answer>...</answer>.",
+        "Given the earlier attempts and the number after each attempt, write an improved answer designed to beat that number. \nWrite your final answer in the format of <answer>...</answer>." # the no reference to reward prompt
     )
 
     explore_and_exploit_instruction: str = """
@@ -442,12 +446,14 @@ def format_attempt_content(attempt_content: str, reward: float, config: MathConf
     
     # Replace multiple newlines with single newline
     attempt_content = re.sub(r'\n+', '\n', attempt_content)
-    
+
     # Format with reward in front and human readable reward format
     if reward is None:
         formatted_content = f"<{tag_name}>\n{attempt_content}\n</{tag_name}>"
+    elif config.reward_first:
+        formatted_content = f"<{tag_name}>\n**{config.label_name}: {int(reward * 100)}/100**\n{attempt_content}\n</{tag_name}>"
     else:
-        formatted_content = f"<{tag_name}>\n{attempt_content}\n</{tag_name}>**Achieved score: {int(reward * 100)}/100**"
+        formatted_content = f"<{tag_name}>\n{attempt_content}\n</{tag_name}>**{config.label_name}: {int(reward * 100)}/100**"
     
     return formatted_content
 

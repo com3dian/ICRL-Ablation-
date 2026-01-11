@@ -73,3 +73,6 @@ python3 math_bench.py dataset_name=MathArena/aime_2025 postfix=aime_prompt3 disa
 
 python3 math_bench.py dataset_name=MathArena/aime_2025 postfix=aime_random_reward2 disable_reasoning=true random_rewards=0.2 
 python3 math_bench.py dataset_name=MathArena/aime_2025 postfix=aime_random_reward5 disable_reasoning=true random_rewards=0.5 
+
+python3 math_bench.py dataset_name=MathArena/aime_2025 postfix=aime_no_reward_label alternate_prompt=4 label_name="Number" disable_reasoning=true 
+python3 math_bench.py dataset_name=MathArena/aime_2025 postfix=aime_reward_first reward_first=true  disable_reasoning=true 
