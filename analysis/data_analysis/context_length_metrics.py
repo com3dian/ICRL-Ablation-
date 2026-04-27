@@ -9,6 +9,8 @@ for each question
 """
 
 from dataclasses import dataclass
+import sys, os
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', 'experiments', 'math'))
 from math_bench import DataStore
 from transformers import AutoTokenizer
 

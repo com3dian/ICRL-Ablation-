@@ -14,6 +14,8 @@ from datetime import datetime
 import uuid
 import pickle
 import re
+import sys, os
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', 'experiments', 'math'))
 from math_bench import DataStore
 plt.style.use(['science', 'no-latex'])
 
