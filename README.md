@@ -6,7 +6,7 @@
 This repository contains the code for reproducing the results in the paper "Reward Is Enough: LLMs Are In-Context Reinforcement Learners" (ICLR 2026).
 
 <p align="center">
-  <img src="assets/framework.png" width="600">
+  <img src="assets/framework.png" width="400">
 </p>
 
 ## Repository Structure
