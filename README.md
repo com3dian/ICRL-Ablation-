@@ -14,7 +14,11 @@ This repository contains the code for reproducing the results in the paper "Rewa
 ```
 ├── experiments/                          # Core ICRL experiments
 │   ├── game24/                           # Game of 24
+│   │   ├── game24_icrl.py               # ICRL (main method)
+│   │   └── baselines/                   # Reflexion, Self-Refine, CoT, etc.
 │   ├── creative_writing/                 # Creative Writing
+│   │   ├── creative_writing_icrl.py     # ICRL (main method)
+│   │   └── baselines/                   # Reflexion, Self-Refine, CoT, etc.
 │   ├── math/                             # Math Competitions (AIME/HMMT)
 │   └── sciworld/                         # ScienceWorld
 ├── analysis/                             # Analysis experiments & visualization
@@ -48,24 +52,15 @@ uv pip install -r requirements/requirements_creative_writing_game24.txt
 Configure the OpenAI API key and specify which ICRL method or ablation to run in the file, then run:
 ```bash
 cd experiments/game24
-python llm_game24_api.py
+python game24_icrl.py
 ```
 
-Run reflexion baseline:
+Run baselines:
 ```bash
-python llm_game24_api_reflexion.py
-```
-Run self-refine baseline:
-```bash
-python llm_game24_api_self-refine.py
-```
-Run Best-of-N baseline:
-```bash
-python llm_game24_api_rejection.py
-```
-Run long CoT baseline:
-```bash
-python llm_game24_api_CoT.py
+python baselines/game24_reflexion.py
+python baselines/game24_self_refine.py
+python baselines/game24_rejection.py
+python baselines/game24_cot.py
 ```
 
 
@@ -74,20 +69,14 @@ python llm_game24_api_CoT.py
 Configure the OpenAI API key and specify which ICRL method or ablation to run in the file, then run:
 ```bash
 cd experiments/creative_writing
-python llm_creative_writing_api.py
+python creative_writing_icrl.py
 ```
 
-Run reflexion baseline:
+Run baselines:
 ```bash
-python llm_creative_writing_api_reflexion.py
-```
-Run self-refine baseline:
-```bash
-python llm_creative_writing_api_self-refine.py
-```
-Run long CoT baseline:
-```bash
-python llm_creative_writing_api_CoT.py
+python baselines/creative_writing_reflexion.py
+python baselines/creative_writing_self_refine.py
+python baselines/creative_writing_cot.py
 ```
 
 ## ScienceWorld
