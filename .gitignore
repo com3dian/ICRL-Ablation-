@@ -30,6 +30,9 @@ env/
 ENV/
 .env
 .venv
+.conda/
+/ablation/outputs/
+/ablation/data/
 
 # Jupyter Notebook
 .ipynb_checkpoints
@@ -58,4 +61,3 @@ ENV/
 .Trashes
 ehthumbs.db
 Thumbs.db
-
