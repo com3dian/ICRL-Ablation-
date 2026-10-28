@@ -5,6 +5,7 @@ from pathlib import Path
 
 from .client import judge_options
 from .feedback import format_feedback
+from .reward_polarity import shown_reward
 
 BASE_PASSAGE = (
     "At dawn, golden light slips past pale curtains, rousing the world in quiet celebration. "
@@ -40,7 +41,7 @@ def build_prompt(ending: str, history: list[dict], round_idx: int, history_limit
     question = COT_PROMPT.format(ending=ending)
     parts = []
     for attempt in selected:
-        reward = format_feedback(attempt["reward"])
+        reward = format_feedback(attempt.get("shown_reward", attempt["reward"]))
         parts.append(
             f"<attempt>\n**Prompt**: {question}\n**Reward**: {reward}\n"
             f"{attempt['answer']}\n**Reward**: {reward}\n</attempt>"
@@ -61,11 +62,12 @@ def build_prompt(ending: str, history: list[dict], round_idx: int, history_limit
 def evaluate(
     output: str, judge, judge_model: str, log, *,
     sample_id: int, round_idx: int, judge_max_tokens: int = 1024,
+    reward_polarity: str = "normal", seed_policy: str = "fixed",
 ) -> dict:
     match = re.search(r"<answer>(.*?)</answer>", output, re.I | re.S)
     answer = match.group(1).strip() if match else ""
     passage = answer.split("Passage:", 1)[-1].strip() if "Passage:" in answer else answer
-    if round_idx == 0:
+    if round_idx == 0 and seed_policy == "fixed":
         reward, raw, prompt, status = 1, "", "", "seed_round"
     else:
         prompt = (
@@ -88,12 +90,14 @@ def evaluate(
         parsed = _COHERENCE.search(raw)
         reward = int(parsed.group(1)) if parsed else 0
         status = "ok" if parsed else "invalid_judge_score"
+    shown = shown_reward("creative_writing", reward, reward_polarity, status=status)
     log.emit(
         "eval_step", sample_id=sample_id, round=round_idx, step=1,
         judge_prompt=prompt, judge_response=raw, reward=reward,
-        display_reward=format_feedback(reward), status=status,
+        shown_reward=shown, display_reward=format_feedback(shown), status=status,
     )
-    return {"answer": answer, "passage": passage, "reward": reward, "eval_status": status}
+    return {"answer": answer, "passage": passage, "reward": reward,
+            "shown_reward": shown, "eval_status": status}
 
 
 def run(settings: dict, client, log):
@@ -114,12 +118,15 @@ def run(settings: dict, client, log):
                 output, client, settings["judge_model"], log,
                 sample_id=sample_id, round_idx=round_idx,
                 judge_max_tokens=settings["judge_max_tokens"],
+                reward_polarity=settings.get("reward_polarity", "normal"),
+                seed_policy=settings.get("writing_seed_policy", "fixed"),
             )
             histories[sample_id].append(result)
             rewards.append(result["reward"])
             log.emit(
                 "attempt_end", sample_id=sample_id, round=round_idx,
-                reward=result["reward"], display_reward=format_feedback(result["reward"]),
+                reward=result["reward"], shown_reward=result["shown_reward"],
+                display_reward=format_feedback(result["shown_reward"]),
                 answer=result["answer"], eval_status=result["eval_status"],
             )
         log.emit("round_end", round=round_idx, mean_reward=sum(rewards) / len(rewards), count=len(rewards))

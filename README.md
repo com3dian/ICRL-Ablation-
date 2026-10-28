@@ -90,6 +90,28 @@ This is a smoke test, not a substitute for the SURF comparison: a different cand
 
 Use `--samples`, `--rounds`, `--history`, and `--max-env-steps` to control scope. `--judge-model` changes the fixed judge; keep it constant across conditions. Game24 and Creative Writing judge calls use a separate `--judge-max-tokens` budget (default 1024, including reasoning tokens). If a judge consumes its whole budget without a visible answer, it retries with 2× then 4× that budget and logs each attempt's token usage as `judge_call`. Transient HTTP 408 timeouts are also retried. It still fails the run if all attempts are empty; a judge outage never becomes a zero reward. The default GPT-OSS judge uses low reasoning effort; this does not change GPT-OSS candidate generation. A malformed Game24 `<answer>` is scored as four zero steps with `invalid_generation` status, without calling the judge. These policies and judge settings are recorded in `config.json` and should be held constant across conditions. `--feedback en`, `fr`, or `zh` selects just one text format; `all` also includes the numeric baseline. `--keep-going` lets other conditions proceed if a model is unavailable and returns a failure status at the end. The runner writes append-only per-step evaluations, each attempt's numeric and displayed reward, prompts, responses, configuration, and final summary under `ablation/outputs/<task>/<model>/<feedback>/<run-id>/`. The directory is local and Git-ignored. A completed condition also gets `reward.png` (mean numeric reward by round); regenerate a plot from a partial run with `python -m ablation.plot /absolute/path/to/run-directory`.
 
+### Flipped-reward condition
+
+Add `--reward-polarity flipped` to a new `ablation.run` condition. For example, from the repository root:
+
+```bash
+.conda/ablation/bin/python -m ablation.run --provider cliproxy --task game24 --model gpt6luna --feedback numeric --reward-polarity flipped
+```
+
+For a **new matched normal** Game24 condition, use the same provider, model, judge, feedback, data, sample count, and round count, and remove the placeholder scores from the worked examples in both conditions:
+
+```bash
+.conda/ablation/bin/python -m ablation.run --provider cliproxy --task game24 --model gpt6luna --feedback numeric --game24-demo-policy unscored
+```
+
+For Creative Writing, add `--writing-seed-policy judged` to the matched normal run. The flipped condition selects this policy automatically; both conditions then judge round 0 rather than assigning it a fixed score of 1. For Game24, the flipped condition automatically removes placeholder `Reward: 0` labels from its solved worked examples; the matched normal run should use `--game24-demo-policy unscored`. `--task all` applies both policies automatically in the flipped condition. Existing normal runs retain their historical policies, so compare against fresh matched runs. Reward polarity is separate from `--feedback numeric|en|fr|zh`. These commands make model and judge API calls; the dashboard does not.
+
+To run all three tasks with one Cliproxy model and numeric feedback, use `--task all --model gpt6luna --provider cliproxy --feedback numeric --reward-polarity flipped`. For its new matched normal run, use the same command without `--reward-polarity flipped` and add `--game24-demo-policy unscored --writing-seed-policy judged`. You can instead select one task at a time; the runner saves each condition separately.
+
+The judge or environment still produces the **true** `reward` used in plots and the dashboard. New events also store numeric `shown_reward` and its language-rendered `display_reward`, which are what the model sees. Game24 reverses valid intermediate scores with `3 - reward` and the final score with `10 - reward`; its shown attempt total is the sum of the four shown step scores. Creative Writing uses `11 - reward` for valid 1–10 scores. ScienceWorld uses `-reward` for each environment score change and for the attempt total. Malformed Game24 generations and invalid judge responses retain zero feedback and their failure status. The flipped output directory adds `/flipped/` between the feedback name and run ID, and Game24 resume reads the saved polarity and policies. Do not resume a normal run to create a flipped condition.
+
+Math uses its separate runner. From `experiments/math`, in the environment used for that experiment, run `python math_bench.py flip_rewards=true postfix=flipped_reward` for deterministic `1 - true_reward` feedback. Its saved attempts keep the original score in `extra_fields.real_reward`; the `reward` field drives the model's history and sorting. Use `flip_rewards=false` for a new matched control. An invalid Math reward-model response now fails the run instead of being converted into zero and accidentally appearing as a perfect flipped score.
+
 To continue an interrupted **Game24** run later, with its saved provider, models, feedback, and data (so the relevant API must be reachable), use:
 
 ```bash
@@ -104,7 +126,7 @@ From the repository root, launch the local-only live dashboard with the ablation
 .conda/ablation/bin/python -m ablation.dashboard
 ```
 
-The dashboard refreshes every two seconds and shows per-step/per-attempt numeric rewards and their displayed text. The run dropdown includes each run's local date/time and status (`running`, `succeeded`, `failed`, or `incomplete`); failed runs remain listed. For Game24, its main trial-by-trial curve is the mean rule-based success rate (correct expression using all four numbers), as in Figure 2 of the paper. A separate curve shows the mean total judge reward, and four smaller curves show the mean judge reward for Steps 1-3 and the final answer separately. Other tasks show mean numeric reward by trial. Shading is ±1 standard error across evaluated samples, and an open dot marks a partial trial. With only trial 0 available, you will see one point; the line appears when trial 1 begins. The dashboard reads the local output directory and does not call SURF. Restart it after updating the code to see the new charts.
+The dashboard refreshes every two seconds and shows per-step/per-attempt numeric rewards and their displayed text. The run dropdown includes each run's local date/time and status (`running`, `succeeded`, `failed`, or `incomplete`); failed runs remain listed. For Game24, its main trial-by-trial curve is the mean rule-based success rate (correct expression using all four numbers), as in Figure 2 of the paper. A separate curve shows the mean total judge reward, and four smaller curves show the mean judge reward for Steps 1-3 and the final answer separately. Other tasks show mean numeric reward by trial. Shading is ±1 standard error across evaluated samples, and an open dot marks a partial trial. Hover over a chart to see the nearest iteration's y value, a vertical guide, and its iteration label on the x axis. With only trial 0 available, you will see one point; the line appears when trial 1 begins. The dashboard reads the local output directory and does not call SURF. Restart it after updating the code to see the new charts.
 
 ## Game of 24
 

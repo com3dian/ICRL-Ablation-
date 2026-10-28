@@ -5,6 +5,7 @@ import sys
 from pathlib import Path
 
 from .feedback import format_feedback
+from .reward_polarity import shown_reward
 
 ROOT = Path(__file__).resolve().parents[1]
 SCI_DIR = ROOT / "experiments" / "sciworld"
@@ -80,11 +81,11 @@ def _history_block(history: list[dict], limit: int | None) -> str:
         for step in attempt["steps"]:
             steps.append(
                 f"{step['action']} -> {step['observation']} "
-                f"(reward={format_feedback(step['reward'])})"
+                f"(reward={format_feedback(step.get('shown_reward', step['reward']))})"
             )
         blocks.append(
             f"<Attempt {number}>\n" + "\n".join(steps)
-            + f"\nTotal reward: {format_feedback(attempt['reward'])}\n</Attempt>"
+            + f"\nTotal reward: {format_feedback(attempt.get('shown_reward', attempt['reward']))}\n</Attempt>"
         )
     return "\n".join(blocks)
 
@@ -120,13 +121,16 @@ def _attempt(env, history, config, settings, client, log, *, sample_id: int, rou
         output = client.generate(settings["model"], messages, temperature=1.0, max_tokens=settings["max_tokens"])
         observation, state = env.step(output)
         reward = int(state.reward)
+        shown = shown_reward("sciworld", reward, settings.get("reward_polarity", "normal"))
         action = env.parse_action(output)
-        step = {"step": step_idx + 1, "action": action, "observation": observation, "reward": reward}
+        step = {"step": step_idx + 1, "action": action, "observation": observation,
+                "reward": reward, "shown_reward": shown}
         steps.append(step)
         log.emit(
             "eval_step", sample_id=sample_id, round=round_idx, step=step_idx + 1,
             raw_prompt=raw_messages, model_response=output, action=action,
-            observation=observation, reward=reward, display_reward=format_feedback(reward),
+            observation=observation, reward=reward, shown_reward=shown,
+            display_reward=format_feedback(shown),
             cumulative_reward=sum(item["reward"] for item in steps), finished=bool(state.finished),
         )
         messages.append({"role": "assistant", "content": output})
@@ -134,14 +138,17 @@ def _attempt(env, history, config, settings, client, log, *, sample_id: int, rou
             break
         messages.append({
             "role": "user", "content": observation
-            + f" (Reward: {format_feedback(reward)})\nAvailable objects: "
+            + f" (Reward: {format_feedback(shown)})\nAvailable objects: "
             + ", ".join(env.env.get_possible_objects()) + "\n" + config.available_actions,
         })
     total = sum(item["reward"] for item in steps)
-    attempt = {"steps": steps, "reward": total, "finished": bool(state.finished)}
+    shown_total = sum(item["shown_reward"] for item in steps)
+    attempt = {"steps": steps, "reward": total, "shown_reward": shown_total,
+               "finished": bool(state.finished)}
     log.emit(
         "attempt_end", sample_id=sample_id, round=round_idx, task=task_description,
-        reward=total, display_reward=format_feedback(total), steps=len(steps),
+        reward=total, shown_reward=shown_total,
+        display_reward=format_feedback(shown_total), steps=len(steps),
         finished=bool(state.finished), bootstrap=bootstrap,
     )
     return attempt

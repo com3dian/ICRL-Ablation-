@@ -10,6 +10,7 @@ from .client import (CLIPROXY_MODELS, MODELS, SURF_MODELS, SurfClient,
 from .events import EventLog
 from .feedback import LANGUAGES, feedback_language
 from .plot import plot_run
+from .reward_polarity import POLARITIES
 
 TASKS = ("game24", "creative_writing", "sciworld")
 DEFAULT_SAMPLES = {"game24": 100, "creative_writing": 100, "sciworld": 29}
@@ -22,6 +23,12 @@ def parse_args():
     parser.add_argument("--task", choices=(*TASKS, "all"))
     parser.add_argument("--model", choices=(*MODELS, "all"))
     parser.add_argument("--feedback", choices=(*LANGUAGES, "all"))
+    parser.add_argument("--reward-polarity", choices=POLARITIES, default="normal",
+                        help="Reverse model-visible rewards while retaining true scores for evaluation")
+    parser.add_argument("--writing-seed-policy", choices=("fixed", "judged"),
+                        help="Creative Writing round 0: default fixed for normal, judged for flipped")
+    parser.add_argument("--game24-demo-policy", choices=("legacy", "unscored"),
+                        help="Game24 examples: default legacy for normal, unscored for flipped")
     parser.add_argument("--provider", choices=("surf", "cliproxy"), default="surf")
     parser.add_argument("--resume", type=Path, help="Resume one unfinished Game24 run from its output directory")
     parser.add_argument("--game24-data", type=Path, default=DATA_ROOT / "24.csv", help="Puzzle CSV; defaults to ablation/data/24.csv")
@@ -46,8 +53,8 @@ def parse_args():
     if args.bootstrap_attempts < 0 or args.start_index < 0:
         parser.error("--bootstrap-attempts and --start-index cannot be negative")
     if args.resume:
-        if any((args.task, args.model, args.feedback, args.judge_model, args.samples, args.rounds)):
-            parser.error("--resume reads the saved configuration; do not combine it with task/model/feedback overrides")
+        if any((args.task, args.model, args.feedback, args.judge_model, args.samples, args.rounds)) or args.reward_polarity != "normal" or args.writing_seed_policy is not None or args.game24_demo_policy is not None:
+            parser.error("--resume reads the saved configuration; do not combine it with condition overrides")
         if not (args.resume / "config.json").is_file() or not (args.resume / "events.jsonl").is_file():
             parser.error("--resume must point to a run directory containing config.json and events.jsonl")
         return args
@@ -57,6 +64,14 @@ def parse_args():
     if args.model != "all" and args.model not in available:
         parser.error(f"--model {args.model} is not available for {args.provider}")
     tasks = TASKS if args.task == "all" else (args.task,)
+    if args.writing_seed_policy is None:
+        args.writing_seed_policy = "judged" if args.reward_polarity == "flipped" else "fixed"
+    if args.game24_demo_policy is None:
+        args.game24_demo_policy = "unscored" if args.reward_polarity == "flipped" else "legacy"
+    if args.reward_polarity == "flipped" and "creative_writing" in tasks and args.writing_seed_policy != "judged":
+        parser.error("Flipped Creative Writing requires --writing-seed-policy judged; use it for the matched normal run too")
+    if args.reward_polarity == "flipped" and "game24" in tasks and args.game24_demo_policy != "unscored":
+        parser.error("Flipped Game24 requires --game24-demo-policy unscored; use it for the matched normal run too")
     if "game24" in tasks and (not args.game24_data or not args.game24_data.is_file()):
         parser.error("Game24 puzzle file is missing; run 'python -m ablation.prepare_data' or pass --game24-data PATH")
     if "creative_writing" in tasks and (not args.writing_data or not args.writing_data.is_file()):
@@ -126,6 +141,9 @@ def main():
                     "judge_retry_budgets": [args.judge_max_tokens * 2, args.judge_max_tokens * 4],
                     "invalid_generation_policy": "zero_reward_no_judge",
                     "feedback": feedback,
+                    "reward_polarity": args.reward_polarity,
+                    "writing_seed_policy": args.writing_seed_policy,
+                    "game24_demo_policy": args.game24_demo_policy,
                     "rounds": args.rounds or DEFAULT_ROUNDS[task], "samples": args.samples or DEFAULT_SAMPLES[task],
                     "history": history, "max_tokens": args.max_tokens,
                     "game24_data": str(args.game24_data.resolve()) if args.game24_data else None,
@@ -134,7 +152,7 @@ def main():
                     "max_env_steps": args.max_env_steps,
                 }
                 log = EventLog(task, model_alias, feedback, settings)
-                print(f"Starting {task} / {model_alias} / {feedback}: {log.path}", flush=True)
+                print(f"Starting {task} / {model_alias} / {feedback} / {args.reward_polarity}: {log.path}", flush=True)
                 try:
                     with feedback_language(feedback):
                         log.emit("run_start", task=task, model=MODELS[model_alias], feedback=feedback)

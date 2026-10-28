@@ -69,6 +69,7 @@ class MathConfig:
     max_attempts_in_context: Optional[int] = None # Ablation
     # zero_out_rewards: bool = False # Ablation
     random_rewards: float = 0.0 # Ablation - 0.0 = never, 1.0 = always
+    flip_rewards: bool = False # Deterministic reward reversal: model sees 1 - true reward
     # no_rewards: bool = False # Ablation
     # explore_only: bool = False # Ablation
     # exploit_only: bool = False # Ablation
@@ -270,6 +271,8 @@ def parse_args():
     config.is_openrouter = '/' in config.model_name
 
     # sanity checks
+    if config.flip_rewards and config.random_rewards:
+        raise ValueError("Use flip_rewards or random_rewards, not both")
     # assert sum([config.explore_only, config.explore_and_exploit]) <= 1, "Only one of explore_only or explore_and_exploit can be true"
     # assert sum([config.no_rewards, config.zero_out_rewards]) <= 1, "Only one of positive_only, no_rewards, or zero_out_rewards can be true"
 
@@ -421,8 +424,16 @@ class RewardModel:
                 return 1 - np.exp(reward_output.choices[0].logprobs.content[0].logprob)
             else:
                 logger.warning(
-                    f"Invalid reward answer: {reward_answer} \n for problem {problem_instance['problem']} \n model output: {model_output}")
-                return 0
+                    f"Invalid reward answer: {reward_answer} \n for problem {problem_instance.problem} \n model output: {model_output}")
+                raise ValueError(f"Invalid reward-model answer: {reward_answer!r}")
+
+
+def model_visible_reward(reward: float, config: MathConfig) -> float:
+    """Keep true reward in extra_fields; reverse only the value used for feedback."""
+    if config.flip_rewards or (config.random_rewards > 0 and np.random.random() < config.random_rewards):
+        return 1 - reward
+    return reward
+
 
 def merge_same_role_messages(messages):
     merged_messages = []
@@ -556,8 +567,7 @@ async def run_evaluation(config: MathConfig, data: DataStore = None):
             reward = await reward_model.get_reward_for_answer(model_output, problem_instance, config)
 
             real_reward = reward
-            if config.random_rewards > 0 and np.random.random() < config.random_rewards:
-                reward = 1 - reward
+            reward = model_visible_reward(reward, config)
             
             attempt = DataStore.Attempt(
                 raw_prompt=messages,
@@ -633,8 +643,7 @@ async def run_evaluation(config: MathConfig, data: DataStore = None):
             reward = await reward_model.get_reward_for_answer(model_output, data.problem_histories[problem_idx].problem, config)
 
             real_reward = reward
-            if config.random_rewards > 0 and np.random.random() < config.random_rewards:
-                reward = 1 - reward
+            reward = model_visible_reward(reward, config)
             
             data.problem_histories[problem_idx].attempts.append(DataStore.Attempt(
                 raw_prompt=messages,
@@ -681,8 +690,7 @@ async def run_evaluation(config: MathConfig, data: DataStore = None):
             reward = await reward_model.get_reward_for_answer(model_output, data.problem_histories[problem_idx].problem, config)
             
             real_reward = reward
-            if config.random_rewards > 0 and np.random.random() < config.random_rewards:
-                reward = 1 - reward
+            reward = model_visible_reward(reward, config)
             
             current_attempt = DataStore.Attempt(
                 raw_prompt=copy.deepcopy(messages),

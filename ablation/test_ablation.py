@@ -11,7 +11,8 @@ from unittest.mock import patch
 import httpx
 from openai import APIStatusError
 
-from . import dashboard
+from . import dashboard, events
+from . import run as ablation_run
 from .client import MODELS, SurfClient, generation_options, judge_options
 from .creative_writing import build_prompt as writing_prompt, evaluate as evaluate_writing
 from .events import EventLog
@@ -19,6 +20,7 @@ from .feedback import feedback_language, format_feedback, spell_reward
 from .game24 import (_JUDGE_ANSWER, _one_shot_with_feedback, build_prompt as game24_prompt,
                      evaluate as evaluate_game24, run as run_game24)
 from .plot import plot_run
+from .reward_polarity import shown_reward
 from .sciworld import (_attempt as scienceworld_attempt,
                        _install_scienceworld_compat, _load_envs_compat)
 
@@ -141,6 +143,99 @@ class FeedbackTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             spell_reward(1.5, "en")
 
+    def test_flipped_reward_scales_and_failed_evaluations(self):
+        self.assertEqual([shown_reward("game24", score, "flipped", step=1)
+                          for score in (0, 1, 3)], [3, 2, 0])
+        self.assertEqual(shown_reward("game24", 10, "flipped", step=4), 0)
+        self.assertEqual(shown_reward("game24", 0, "flipped", step=4), 10)
+        self.assertEqual([shown_reward("creative_writing", score, "flipped")
+                          for score in (1, 5, 10)], [10, 6, 1])
+        self.assertEqual(shown_reward("sciworld", 17, "flipped"), -17)
+        self.assertEqual(shown_reward("sciworld", -3, "flipped"), 3)
+        self.assertEqual(shown_reward("game24", 0, "flipped", step=1,
+                                      status="invalid_judge_score"), 0)
+        self.assertEqual(shown_reward("creative_writing", 0, "flipped",
+                                      status="invalid_judge_score"), 0)
+
+    def test_flipped_cli_defaults_and_matched_normal_settings(self):
+        with patch("sys.argv", ["ablation.run", "--task", "all", "--model", "gpt6luna",
+                                "--provider", "cliproxy", "--feedback", "numeric",
+                                "--reward-polarity", "flipped"]):
+            args = ablation_run.parse_args()
+        self.assertEqual((args.game24_demo_policy, args.writing_seed_policy),
+                         ("unscored", "judged"))
+        with patch("sys.argv", ["ablation.run", "--task", "all", "--model", "gpt6luna",
+                                "--provider", "cliproxy", "--feedback", "numeric",
+                                "--game24-demo-policy", "unscored",
+                                "--writing-seed-policy", "judged"]):
+            args = ablation_run.parse_args()
+        self.assertEqual(args.reward_polarity, "normal")
+        self.assertEqual((args.game24_demo_policy, args.writing_seed_policy),
+                         ("unscored", "judged"))
+
+    def test_flipped_game24_keeps_true_score_and_uses_shown_history(self):
+        class FakeJudge:
+            def generate(self, model, prompt, **kwargs):
+                if "Solution:" in prompt:
+                    return "**Answer**: 10"
+                return f"**Answer**: {('0', '1', '3')[int(prompt.split('Step ')[1][0]) - 1]}"
+
+        class FakeLog:
+            def __init__(self):
+                self.records = []
+
+            def emit(self, event, **fields):
+                self.records.append((event, fields))
+
+        log = FakeLog()
+        response = "<answer>Step 1: a Step 2: b Step 3: c **Answer**: d</answer>"
+        with feedback_language("en"):
+            result = evaluate_game24("1 2 3 4", response, FakeJudge(), MODELS["gpt6luna"],
+                                     log, sample_id=0, round_idx=1, reward_polarity="flipped")
+            prompt = game24_prompt("1 2 3 4", [result], 1, None, "unscored")
+        self.assertEqual(result["step_rewards"], [0, 1, 3, 10])
+        self.assertEqual(result["shown_step_rewards"], [3, 2, 0, 0])
+        self.assertEqual((result["reward"], result["shown_reward"]), (14, 5))
+        self.assertIn("<Reward: three> Step 2", prompt)
+        self.assertIn("**Reward**: five", prompt)
+        self.assertEqual(prompt.count("**Reward**:"), 1)
+        first = next(fields for event, fields in log.records if event == "eval_step")
+        self.assertEqual((first["reward"], first["shown_reward"], first["display_reward"]),
+                         (0, 3, "three"))
+
+    def test_flipped_writing_judges_seed_and_keeps_true_score(self):
+        class FakeJudge:
+            def generate(self, *args, **kwargs):
+                return "Coherency score: 8"
+
+        class FakeLog:
+            def __init__(self):
+                self.records = []
+
+            def emit(self, event, **fields):
+                self.records.append((event, fields))
+
+        log = FakeLog()
+        with feedback_language("fr"):
+            result = evaluate_writing("<answer>Passage: Bonjour.</answer>", FakeJudge(),
+                                      MODELS["gpt6luna"], log, sample_id=0, round_idx=0,
+                                      reward_polarity="flipped", seed_policy="judged")
+            prompt = writing_prompt("End.", [result], 1, None)
+        self.assertEqual((result["reward"], result["shown_reward"]), (8, 3))
+        self.assertIn("**Reward**: trois", prompt)
+        self.assertEqual(log.records[0][1]["status"], "ok")
+        self.assertEqual(log.records[0][1]["display_reward"], "trois")
+
+        class InvalidJudge:
+            def generate(self, *args, **kwargs):
+                return "No numeric score"
+
+        invalid = evaluate_writing("<answer>Passage: Bonjour.</answer>", InvalidJudge(),
+                                   MODELS["gpt6luna"], log, sample_id=0, round_idx=1,
+                                   reward_polarity="flipped")
+        self.assertEqual((invalid["reward"], invalid["shown_reward"]), (0, 0))
+        self.assertEqual(invalid["eval_status"], "invalid_judge_score")
+
     def test_game24_demo_and_history_rendered_as_words(self):
         history = [{"response": "Step 1: a\nStep 2: b\nStep 3: c\n**Answer**: d",
                     "step_rewards": [3, 1, 0, 10], "reward": 14}]
@@ -207,8 +302,9 @@ class FeedbackTests(unittest.TestCase):
         log = FakeLog()
         result = evaluate_game24("4 5 6 8", "<answer>Step 1: 6 - 4 = 2 (left:",
                                  FakeJudge(), MODELS["oss120b"], log,
-                                 sample_id=0, round_idx=0)
+                                 sample_id=0, round_idx=0, reward_polarity="flipped")
         self.assertEqual(result["step_rewards"], [0, 0, 0, 0])
+        self.assertEqual(result["shown_reward"], 0)
         self.assertEqual(result["eval_status"], "invalid_generation")
         self.assertEqual(result["response"], "<answer>Step 1: 6 - 4 = 2 (left:")
         self.assertEqual([fields["status"] for event, fields in log.events if event == "eval_step"],
@@ -269,6 +365,7 @@ class FeedbackTests(unittest.TestCase):
                     "rounds": 1, "history": None, "model": MODELS["gpt6luna"],
                     "judge_model": MODELS["gpt6luna"], "max_tokens": 1000,
                     "judge_max_tokens": 1024, "_resume_path": str(run_dir),
+                    "reward_polarity": "flipped", "game24_demo_policy": "unscored",
                 }
                 (run_dir / "config.json").write_text(json.dumps({"task": "game24"}), encoding="utf-8")
                 prior = [
@@ -306,6 +403,8 @@ class FeedbackTests(unittest.TestCase):
                 self.assertEqual(len(judge.prompts), 4 - saved_count)
                 self.assertEqual(attempts[0]["step_rewards"], [3, 0, 1, 0])
                 self.assertEqual(attempts[0]["reward"], 4)
+                self.assertEqual(attempts[0]["shown_step_rewards"], [0, 3, 2, 10])
+                self.assertEqual(attempts[0]["shown_reward"], 15)
                 self.assertEqual(len(attempts), 1)
                 self.assertEqual(len([event for event in records if event["event"] == "round_end"]), 1)
                 reused = next(event for event in records if event["event"] == "reuse_generation")
@@ -368,6 +467,18 @@ class FeedbackTests(unittest.TestCase):
         first_step = next(fields for event, fields in log.records if event == "eval_step")
         self.assertEqual(first_step["reward"], 3)
         self.assertEqual(first_step["display_reward"], "three")
+
+        settings["reward_polarity"] = "flipped"
+        flipped_client, flipped_log = FakeClient(), FakeLog()
+        with feedback_language("en"):
+            attempt = scienceworld_attempt(FakeEnv(), [], config, settings,
+                                           flipped_client, flipped_log,
+                                           sample_id=0, round_idx=0, bootstrap=False, raw_icl=[])
+        self.assertIn("(Reward: minus three)", flipped_client.prompts[1][-1]["content"])
+        self.assertEqual((attempt["reward"], attempt["shown_reward"]), (3, -3))
+        flipped_step = next(fields for event, fields in flipped_log.records if event == "eval_step")
+        self.assertEqual((flipped_step["reward"], flipped_step["shown_reward"],
+                          flipped_step["display_reward"]), (3, -3, "minus three"))
 
     def test_scienceworld_legacy_method_aliases(self):
         class CurrentEnv:
@@ -444,6 +555,20 @@ class FeedbackTests(unittest.TestCase):
                 page = client.get("/").get_data(as_text=True)
                 self.assertIn("new Date(r.started_at).toLocaleString()", page)
                 self.assertIn("esc(r.status)", page)
+
+    def test_flipped_run_has_separate_path_and_dashboard_label(self):
+        with tempfile.TemporaryDirectory() as temporary, patch.object(events, "OUTPUT_ROOT", Path(temporary)):
+            config = {"task": "game24", "model": "test", "model_alias": "test",
+                      "feedback": "numeric", "reward_polarity": "flipped", "samples": 1}
+            log = EventLog("game24", "test", "numeric", config)
+            try:
+                self.assertEqual(log.path.parent.name, "flipped")
+            finally:
+                log.close()
+            with patch.object(dashboard, "OUTPUT_ROOT", Path(temporary)):
+                listed = dashboard.app.test_client().get("/api/runs").json
+            self.assertEqual(len(listed), 1)
+            self.assertEqual(listed[0]["reward_polarity"], "flipped")
 
     def test_plot_reads_numeric_rewards(self):
         with tempfile.TemporaryDirectory() as temporary:

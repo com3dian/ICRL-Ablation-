@@ -79,7 +79,7 @@ PAGE = """<!doctype html>
 <style>
 body{font-family:system-ui,sans-serif;max-width:1100px;margin:2rem auto;padding:0 1rem;color:#18202b;background:#f8fafc}
 h1{font-size:1.6rem} .card{background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:1rem;margin:1rem 0}
-select{width:100%;padding:.65rem;font-size:1rem}canvas{width:100%;height:330px}table{width:100%;border-collapse:collapse}
+select{width:100%;padding:.65rem;font-size:1rem}canvas{width:100%;height:330px;cursor:crosshair}table{width:100%;border-collapse:collapse}
 th,td{text-align:left;padding:.55rem;border-bottom:1px solid #e2e8f0;vertical-align:top}td{word-break:break-word}
 .muted{color:#64748b}.meta{display:flex;gap:2rem;flex-wrap:wrap}.scroll{max-height:420px;overflow:auto}
 .step-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:1rem}
@@ -108,12 +108,12 @@ function esc(s){return String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&l
 async function refreshRuns(){
   const res=await fetch('/api/runs'), runs=await res.json();
   const previous=selected;
-  picker.innerHTML=runs.map(r=>`<option value="${esc(r.id)}">${esc(r.task)} / ${esc(r.model_alias)} / ${esc(r.feedback)} · ${esc(new Date(r.started_at).toLocaleString())} · ${esc(r.status)}</option>`).join('');
+  picker.innerHTML=runs.map(r=>`<option value="${esc(r.id)}">${esc(r.task)} / ${esc(r.model_alias)} / ${esc(r.feedback)} / ${esc(r.reward_polarity)} · ${esc(new Date(r.started_at).toLocaleString())} · ${esc(r.status)}</option>`).join('');
   if(runs.some(r=>r.id===previous)) picker.value=previous;
   else if(runs.length) picker.value=runs[0].id;
-  if(picker.value!==selected){selected=picker.value;offset=0;records=[];metrics=null;}
+  if(picker.value!==selected){selected=picker.value;offset=0;records=[];metrics=null;clearChartHover();}
   const current=runs.find(r=>r.id===selected);
-  statusBox.innerHTML=current?`<p><b>Task:</b> ${esc(current.task)}</p><p><b>Model:</b> ${esc(current.model)}</p><p><b>Feedback:</b> ${esc(current.feedback)}</p><p><b>Status:</b> ${current.finished?'finished':'running/partial'}</p>`:'<p>No runs yet.</p>';
+  statusBox.innerHTML=current?`<p><b>Task:</b> ${esc(current.task)}</p><p><b>Model:</b> ${esc(current.model)}</p><p><b>Feedback:</b> ${esc(current.feedback)}</p><p><b>Reward polarity:</b> ${esc(current.reward_polarity)}</p><p><b>Status:</b> ${current.finished?'finished':'running/partial'}</p>`:'<p>No runs yet.</p>';
 }
 async function refreshEvents(){
   if(!selected)return;
@@ -124,17 +124,21 @@ async function refreshEvents(){
   const rows=records.filter(x=>x.event==='eval_step'||x.event==='attempt_end').slice(-60).reverse();
   tbody.innerHTML=rows.map(x=>`<tr><td>${esc(x.time?.slice(11,19))}</td><td>${esc(x.sample_id)}</td><td>${esc(x.round)}</td><td>${esc(x.step??'—')}</td><td>${esc(x.reward)}</td><td>${esc(x.display_reward)}</td><td>${esc(x.event)}${x.status?' · '+esc(x.status):''}</td></tr>`).join('');
 }
-function plotSeries(canvas, points, label, color, fixedMax){
+const chartStates=new WeakMap();
+function formatValue(value){return Number(value).toFixed(3).replace(/\\.?0+$/,'');}
+function drawSeries(state){
+  const {canvas,points,label,color,fixedMax}=state;
   const ctx=canvas.getContext('2d'),w=canvas.width,h=canvas.height;
   ctx.clearRect(0,0,w,h);ctx.fillStyle='#fff';ctx.fillRect(0,0,w,h);
   ctx.font='14px system-ui';ctx.fillStyle='#334155';ctx.fillText(label,55,19);
   const valid=points.filter(p=>Number.isFinite(p.mean));
-  if(!valid.length){ctx.fillText('Waiting for evaluations…',55,52);return;}
+  if(!valid.length){state.layout=null;ctx.fillText('Waiting for evaluations…',55,52);return;}
   const left=58,right=w-20,top=31,bottom=h-42;
   const xmin=valid[0].round,xmax=Math.max(xmin+1,valid.at(-1).round);
   const ymax=fixedMax??Math.max(1,...valid.map(p=>p.mean+(p.sem??0)))*1.08;
   const x=r=>left+(r-xmin)/(xmax-xmin)*(right-left);
   const y=v=>bottom-Math.max(0,Math.min(ymax,v))/ymax*(bottom-top);
+  state.layout={valid,left,right,top,bottom,x,y};
   ctx.strokeStyle='#e2e8f0';ctx.lineWidth=1;
   for(let i=0;i<=4;i++){
     const value=ymax*i/4,py=y(value);ctx.beginPath();ctx.moveTo(left,py);ctx.lineTo(right,py);ctx.stroke();
@@ -152,6 +156,64 @@ function plotSeries(canvas, points, label, color, fixedMax){
   for(const p of valid){
     ctx.beginPath();ctx.arc(x(p.round),y(p.mean),4,0,Math.PI*2);
     ctx.fillStyle=p.complete?color:'#fff';ctx.fill();ctx.strokeStyle=color;ctx.stroke();
+  }
+  const hovered=valid.find(p=>p.round===state.hoverRound);
+  if(!hovered)return;
+  const hx=x(hovered.round),hy=y(hovered.mean);
+  ctx.save();
+  ctx.strokeStyle='#475569';ctx.lineWidth=1;ctx.setLineDash([5,4]);
+  ctx.beginPath();ctx.moveTo(hx,top);ctx.lineTo(hx,bottom);ctx.stroke();ctx.setLineDash([]);
+  ctx.beginPath();ctx.arc(hx,hy,6,0,Math.PI*2);
+  ctx.fillStyle=hovered.complete?color:'#fff';ctx.fill();ctx.strokeStyle=color;ctx.lineWidth=2;ctx.stroke();
+  const tick=`Iter ${hovered.round}`;
+  ctx.font='12px system-ui';
+  const tickWidth=ctx.measureText(tick).width+12;
+  const tickX=Math.max(left,Math.min(right-tickWidth,hx-tickWidth/2));
+  ctx.fillStyle='#fff';ctx.fillRect(tickX,bottom+5,tickWidth,19);
+  ctx.strokeStyle='#94a3b8';ctx.lineWidth=1;ctx.strokeRect(tickX,bottom+5,tickWidth,19);
+  ctx.fillStyle='#0f172a';ctx.fillText(tick,tickX+6,bottom+19);
+  const detail=`Iteration ${hovered.round} · y = ${formatValue(hovered.mean)}`;
+  const detailWidth=ctx.measureText(detail).width+16;
+  const detailX=Math.max(left,Math.min(right-detailWidth,hx+10));
+  const detailY=Math.max(top+5,Math.min(bottom-29,hy-34));
+  ctx.fillStyle='#fff';ctx.fillRect(detailX,detailY,detailWidth,24);
+  ctx.strokeStyle='#94a3b8';ctx.strokeRect(detailX,detailY,detailWidth,24);
+  ctx.fillStyle='#0f172a';ctx.fillText(detail,detailX+8,detailY+16);
+  ctx.restore();
+}
+function plotSeries(canvas, points, label, color, fixedMax){
+  const bounds=canvas.getBoundingClientRect();
+  const width=Math.round(bounds.width),height=Math.round(bounds.height);
+  if(width>0&&height>0&&(canvas.width!==width||canvas.height!==height)){
+    canvas.width=width;canvas.height=height;
+  }
+  let state=chartStates.get(canvas);
+  if(!state){
+    state={canvas,hoverRound:null,layout:null};chartStates.set(canvas,state);
+    canvas.addEventListener('mousemove',event=>{
+      const plot=state.layout;if(!plot)return;
+      const rect=canvas.getBoundingClientRect();
+      const mx=(event.clientX-rect.left)*canvas.width/rect.width;
+      const my=(event.clientY-rect.top)*canvas.height/rect.height;
+      if(mx<plot.left||mx>plot.right||my<plot.top||my>plot.bottom){
+        if(state.hoverRound!==null){state.hoverRound=null;drawSeries(state);}
+        return;
+      }
+      const nearest=plot.valid.reduce((best,p)=>
+        Math.abs(plot.x(p.round)-mx)<Math.abs(plot.x(best.round)-mx)?p:best);
+      if(state.hoverRound!==nearest.round){state.hoverRound=nearest.round;drawSeries(state);}
+    });
+    canvas.addEventListener('mouseleave',()=>{
+      if(state.hoverRound!==null){state.hoverRound=null;drawSeries(state);}
+    });
+  }
+  Object.assign(state,{points,label,color,fixedMax});
+  drawSeries(state);
+}
+function clearChartHover(){
+  for(const id of ['chart','game24RewardChart','step1','step2','step3','step4']){
+    const state=chartStates.get(document.getElementById(id));
+    if(state)state.hoverRound=null;
   }
 }
 async function refreshMetrics(){
@@ -182,7 +244,7 @@ async function refreshMetrics(){
     }
   }
 }
-picker.addEventListener('change',()=>{selected=picker.value;offset=0;records=[];metrics=null;refreshEvents();refreshMetrics();});
+picker.addEventListener('change',()=>{selected=picker.value;offset=0;records=[];metrics=null;clearChartHover();refreshEvents();refreshMetrics();});
 async function tick(){try{await refreshRuns();await Promise.all([refreshEvents(),refreshMetrics()]);}catch(e){statusBox.textContent='Dashboard read failed: '+e.message;}}
 tick();setInterval(tick,2000);
 </script></body></html>"""
@@ -259,7 +321,8 @@ def runs():
                 "id": str(run_dir.relative_to(OUTPUT_ROOT)),
                 "task": config["task"], "model": config["model"],
                 "model_alias": config.get("model_alias", config["model"]),
-                "feedback": config["feedback"], "started_at": _started_at(run_dir, config_file),
+                "feedback": config["feedback"], "reward_polarity": config.get("reward_polarity", "normal"),
+                "started_at": _started_at(run_dir, config_file),
                 "status": _run_status(run_dir),
                 "finished": (run_dir / "summary.json").exists(),
             })

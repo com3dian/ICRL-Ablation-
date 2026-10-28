@@ -13,7 +13,10 @@ OUTPUT_ROOT = Path(__file__).resolve().parent / "outputs"
 class EventLog:
     def __init__(self, task: str, model_alias: str, feedback: str, config: dict):
         stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-        self.path = OUTPUT_ROOT / task / model_alias / feedback / f"{stamp}-{uuid.uuid4().hex[:8]}"
+        self.path = OUTPUT_ROOT / task / model_alias / feedback
+        if config.get("reward_polarity", "normal") == "flipped":
+            self.path /= "flipped"
+        self.path /= f"{stamp}-{uuid.uuid4().hex[:8]}"
         self.path.mkdir(parents=True, exist_ok=False)
         (self.path / "config.json").write_text(json.dumps(config, ensure_ascii=False, indent=2), encoding="utf-8")
         self._stream = (self.path / "events.jsonl").open("a", encoding="utf-8", buffering=1)

@@ -34,7 +34,7 @@ def plot_run(run_dir: Path) -> Path:
     fig, ax = plt.subplots(figsize=(8, 4.5))
     ax.plot(rounds, means, marker="o", label="Mean reward per round")
     ax.plot(rounds, best, linestyle="--", label="Best mean so far")
-    ax.set(xlabel="Round (zero based)", ylabel="Numeric reward", title=f"{config['task']} · {config['model_alias']} · {config['feedback']}")
+    ax.set(xlabel="Round (zero based)", ylabel="True numeric reward", title=f"{config['task']} · {config['model_alias']} · {config['feedback']} · {config.get('reward_polarity', 'normal')}")
     ax.grid(alpha=0.25)
     ax.legend()
     fig.tight_layout()
