@@ -1,0 +1,27 @@
+{
+  "task": "game24",
+  "model_alias": "qwen35b",
+  "model": "Qwen/Qwen3.6-35B-A3B-FP8",
+  "generation_options": {
+    "extra_body": {
+      "chat_template_kwargs": {
+        "enable_thinking": false
+      }
+    }
+  },
+  "judge_model": "openai/gpt-oss-120b",
+  "judge_generation_options": {
+    "reasoning_effort": "low"
+  },
+  "judge_max_tokens": 1024,
+  "feedback": "fr",
+  "rounds": 51,
+  "samples": 100,
+  "history": null,
+  "max_tokens": 1000,
+  "game24_data": "/home/com3dian/Github/ICRL-Ablation-/ablation/data/24.csv",
+  "writing_data": "/home/com3dian/Github/ICRL-Ablation-/ablation/data/data_100_random_text.txt",
+  "start_index": 900,
+  "bootstrap_attempts": 2,
+  "max_env_steps": 15
+}

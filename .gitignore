@@ -31,8 +31,8 @@ ENV/
 .env
 .venv
 .conda/
-/ablation/outputs/
 /ablation/data/
+/ablation/outputs/**/.matplotlib/
 
 # Jupyter Notebook
 .ipynb_checkpoints

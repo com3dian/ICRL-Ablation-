@@ -1,0 +1,32 @@
+{
+  "task": "game24",
+  "model_alias": "gpt6luna",
+  "model": "gpt-6-luna",
+  "provider": "cliproxy",
+  "generation_options": {
+    "reasoning_effort": "none"
+  },
+  "judge_model": "gpt-6-luna",
+  "judge_generation_options": {
+    "reasoning_effort": "none"
+  },
+  "judge_max_tokens": 1024,
+  "judge_retry_budgets": [
+    2048,
+    4096
+  ],
+  "invalid_generation_policy": "zero_reward_no_judge",
+  "feedback": "numeric",
+  "reward_polarity": "flipped",
+  "writing_seed_policy": "judged",
+  "game24_demo_policy": "unscored",
+  "rounds": 51,
+  "samples": 100,
+  "history": null,
+  "max_tokens": 1000,
+  "game24_data": "/home/com3dian/Github/ICRL-Ablation-/ablation/data/24.csv",
+  "writing_data": "/home/com3dian/Github/ICRL-Ablation-/ablation/data/data_100_random_text.txt",
+  "start_index": 900,
+  "bootstrap_attempts": 2,
+  "max_env_steps": 15
+}

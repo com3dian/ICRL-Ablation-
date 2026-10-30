@@ -1,0 +1,29 @@
+{
+  "task": "sciworld",
+  "model_alias": "gpt6luna",
+  "model": "gpt-6-luna",
+  "provider": "cliproxy",
+  "generation_options": {
+    "reasoning_effort": "none"
+  },
+  "judge_model": "gpt-6-luna",
+  "judge_generation_options": {
+    "reasoning_effort": "none"
+  },
+  "judge_max_tokens": 1024,
+  "judge_retry_budgets": [
+    2048,
+    4096
+  ],
+  "invalid_generation_policy": "zero_reward_no_judge",
+  "feedback": "numeric",
+  "rounds": 1,
+  "samples": 1,
+  "history": null,
+  "max_tokens": 256,
+  "game24_data": "/home/com3dian/Github/ICRL-Ablation-/ablation/data/24.csv",
+  "writing_data": "/home/com3dian/Github/ICRL-Ablation-/ablation/data/data_100_random_text.txt",
+  "start_index": 900,
+  "bootstrap_attempts": 1,
+  "max_env_steps": 1
+}
