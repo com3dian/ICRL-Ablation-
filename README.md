@@ -118,6 +118,15 @@ To continue an interrupted **Game24** run later, with its saved provider, models
 python -m ablation.run --resume /absolute/path/to/run-directory
 ```
 
+After moving a run from Linux to macOS, its saved absolute data path may no longer exist. Prepare the data locally and override only its location (the input dataset must match the original):
+
+```bash
+python -m ablation.prepare_data
+python -m ablation.run --resume ablation/outputs/game24/gpt6luna/numeric/flipped/20261028T090654Z-cf363f14 --game24-data ablation/data/24.csv
+```
+
+The original `config.json` is preserved; the resolved data path is recorded in the new `run_resume` event. The environment includes Java 21 for ScienceWorld.
+
 Resume reuses completed attempts, a saved generation, and any contiguous step evaluations already recorded for an incomplete attempt. It judges only the remaining steps, avoiding duplicate rewards; duplicate, out-of-order, or invalid saved step records stop the resume for inspection. Older runs can be resumed, but their new attempts follow the corrected invalid-output/judge-retry policy; for a publishable comparison, start fresh runs for every condition under one policy. Do not resume a SURF run using Cliproxy.
 
 From the repository root, launch the local-only live dashboard with the ablation environment's Python (activation is optional), then open <http://127.0.0.1:8765>:

@@ -31,7 +31,7 @@ def parse_args():
                         help="Game24 examples: default legacy for normal, unscored for flipped")
     parser.add_argument("--provider", choices=("surf", "cliproxy"), default="surf")
     parser.add_argument("--resume", type=Path, help="Resume one unfinished Game24 run from its output directory")
-    parser.add_argument("--game24-data", type=Path, default=DATA_ROOT / "24.csv", help="Puzzle CSV; defaults to ablation/data/24.csv")
+    parser.add_argument("--game24-data", type=Path, help="Puzzle CSV; defaults to ablation/data/24.csv for new runs; also overrides the saved path with --resume")
     parser.add_argument("--writing-data", type=Path, default=DATA_ROOT / "data_100_random_text.txt", help="Writing prompts; defaults to ablation/data/data_100_random_text.txt")
     parser.add_argument("--start-index", type=int, default=900, help="Game24 offset, matching the original experiment")
     parser.add_argument("--samples", type=int, help="Samples per task; defaults are 100, 100, and 29")
@@ -60,6 +60,7 @@ def parse_args():
         return args
     if not all((args.task, args.model, args.feedback)):
         parser.error("--task, --model, and --feedback are required unless --resume is used")
+    args.game24_data = args.game24_data or DATA_ROOT / "24.csv"
     available = SURF_MODELS if args.provider == "surf" else CLIPROXY_MODELS
     if args.model != "all" and args.model not in available:
         parser.error(f"--model {args.model} is not available for {args.provider}")
@@ -95,20 +96,36 @@ def _run_task(task: str, settings: dict, client, log):
     return run(settings, client, log)
 
 
+def _resume_settings(run_dir: Path, game24_data: Path | None = None) -> dict:
+    settings = json.loads((run_dir / "config.json").read_text(encoding="utf-8"))
+    if settings["task"] != "game24":
+        raise ValueError("--resume currently supports Game24 only")
+    data_path = game24_data or Path(settings["game24_data"])
+    if not data_path.is_file():
+        raise ValueError(
+            f"Saved Game24 data is missing: {data_path}. "
+            "Run 'python -m ablation.prepare_data', then resume with "
+            "--game24-data ablation/data/24.csv (use the same dataset as the original run)."
+        )
+    settings["game24_data"] = str(data_path.resolve())
+    settings["_resume_path"] = str(run_dir)
+    return settings
+
+
 def main():
     args = parse_args()
     if args.resume:
         run_dir = args.resume.resolve()
-        settings = json.loads((run_dir / "config.json").read_text(encoding="utf-8"))
-        if settings["task"] != "game24":
-            raise SystemExit("--resume currently supports Game24 only")
-        settings["_resume_path"] = str(run_dir)
+        try:
+            settings = _resume_settings(run_dir, args.game24_data)
+        except ValueError as exc:
+            raise SystemExit(str(exc)) from exc
         client = SurfClient(provider=settings.get("provider", "surf"))
         log = EventLog.reopen(run_dir)
         try:
             with feedback_language(settings["feedback"]):
                 log.emit(
-                    "run_resume", invalid_generation_policy="zero_reward_no_judge",
+                    "run_resume", game24_data=settings["game24_data"], invalid_generation_policy="zero_reward_no_judge",
                     judge_retry_budgets=[settings["judge_max_tokens"] * 2,
                                          settings["judge_max_tokens"] * 4],
                 )

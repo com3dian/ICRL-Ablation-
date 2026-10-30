@@ -5,6 +5,7 @@ channels:
 dependencies:
   - python=3.12
   - pip
+  - openjdk=21
   - pip:
       - dowhen==0.1.0
       - openai>=1.76,<3

@@ -157,6 +157,25 @@ class FeedbackTests(unittest.TestCase):
         self.assertEqual(shown_reward("creative_writing", 0, "flipped",
                                       status="invalid_judge_score"), 0)
 
+    def test_resume_relocates_data_without_changing_saved_config(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            original = {"task": "game24", "game24_data": "/missing/linux/24.csv",
+                        "reward_polarity": "flipped"}
+            config = root / "config.json"
+            config.write_text(json.dumps(original))
+            data = root / "24.csv"
+            data.write_text("Puzzles\n1 2 3 4\n")
+            with self.assertRaisesRegex(ValueError, "--game24-data"):
+                ablation_run._resume_settings(root)
+            settings = ablation_run._resume_settings(root, data)
+            self.assertEqual(settings["game24_data"], str(data.resolve()))
+            self.assertEqual(settings["reward_polarity"], "flipped")
+            self.assertEqual(json.loads(config.read_text()), original)
+            # Once the saved path is valid, it works without an override too.
+            config.write_text(json.dumps(settings))
+            self.assertEqual(ablation_run._resume_settings(root)["game24_data"], str(data.resolve()))
+
     def test_flipped_cli_defaults_and_matched_normal_settings(self):
         with patch("sys.argv", ["ablation.run", "--task", "all", "--model", "gpt6luna",
                                 "--provider", "cliproxy", "--feedback", "numeric",
