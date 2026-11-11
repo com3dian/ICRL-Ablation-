@@ -36,25 +36,31 @@ def load_prompts(path: Path, count: int) -> list[str]:
     return prompts[:count]
 
 
-def build_prompt(ending: str, history: list[dict], round_idx: int, history_limit: int | None) -> str:
+def build_prompt(ending: str, history: list[dict], round_idx: int, history_limit: int | None, *,
+                 include_rewards: bool = True) -> str:
     selected = history if history_limit is None else history[-history_limit:] if history_limit else []
     question = COT_PROMPT.format(ending=ending)
     parts = []
     for attempt in selected:
-        reward = format_feedback(attempt.get("shown_reward", attempt["reward"]))
-        parts.append(
-            f"<attempt>\n**Prompt**: {question}\n**Reward**: {reward}\n"
-            f"{attempt['answer']}\n**Reward**: {reward}\n</attempt>"
+        answer = attempt["answer"]
+        if include_rewards:
+            reward = format_feedback(attempt.get("shown_reward", attempt["reward"]))
+            answer = f"**Reward**: {reward}\n{answer}\n**Reward**: {reward}"
+        parts.append(f"<attempt>\n**Prompt**: {question}\n{answer}\n</attempt>")
+    if round_idx % 2 == 0:
+        feedback = " and its Reward" if include_rewards else ""
+        instruction = (
+            f"Instruction: Examine all the <attempt> examples, each showing a candidate Response{feedback}. "
+            "Provide a response that is different from previous attempts and wrap it in "
+            "<answer>Plan:...Passage:...</answer>."
         )
-    instruction = (
-        "Instruction: Examine all the <attempt> examples, each showing a candidate Response and its Reward. "
-        "Provide a response that is different from previous attempts and wrap it in "
-        "<answer>Plan:...Passage:...</answer>."
-        if round_idx % 2 == 0
-        else "Instruction: Based on the previous <attempt> entries and their rewards, try to produce "
-        "a response with a higher reward, following the task and using "
-        "<answer>Plan:...Passage:...</answer>."
-    )
+    else:
+        feedback = " and their rewards" if include_rewards else ""
+        goal = "a response with a higher reward" if include_rewards else "a more coherent response"
+        instruction = (
+            f"Instruction: Based on the previous <attempt> entries{feedback}, try to produce "
+            f"{goal}, following the task and using <answer>Plan:...Passage:...</answer>."
+        )
     parts.append(f"{instruction}\n**Prompt**: {question}")
     return "\n".join(parts)
 
@@ -62,7 +68,7 @@ def build_prompt(ending: str, history: list[dict], round_idx: int, history_limit
 def evaluate(
     output: str, judge, judge_model: str, log, *,
     sample_id: int, round_idx: int, judge_max_tokens: int = 1024,
-    reward_polarity: str = "normal", seed_policy: str = "fixed",
+    reward_polarity: str = "normal", seed_policy: str = "fixed", random_seed: int = 0,
 ) -> dict:
     match = re.search(r"<answer>(.*?)</answer>", output, re.I | re.S)
     answer = match.group(1).strip() if match else ""
@@ -90,7 +96,8 @@ def evaluate(
         parsed = _COHERENCE.search(raw)
         reward = int(parsed.group(1)) if parsed else 0
         status = "ok" if parsed else "invalid_judge_score"
-    shown = shown_reward("creative_writing", reward, reward_polarity, status=status)
+    shown = shown_reward("creative_writing", reward, reward_polarity, status=status,
+                         random_seed=random_seed, sample_id=sample_id, round_idx=round_idx)
     log.emit(
         "eval_step", sample_id=sample_id, round=round_idx, step=1,
         judge_prompt=prompt, judge_response=raw, reward=reward,
@@ -102,11 +109,13 @@ def evaluate(
 
 def run(settings: dict, client, log):
     prompts = load_prompts(Path(settings["writing_data"]), settings["samples"])
+    reward_polarity = settings.get("reward_polarity", "normal")
     histories = [[] for _ in prompts]
     for round_idx in range(settings["rounds"]):
         rewards = []
         for sample_id, ending in enumerate(prompts):
-            prompt = build_prompt(ending, histories[sample_id], round_idx, settings["history"])
+            prompt = build_prompt(ending, histories[sample_id], round_idx, settings["history"],
+                                  include_rewards=reward_polarity != "empty")
             output = client.generate(
                 settings["model"], prompt, temperature=0.6, max_tokens=settings["max_tokens"],
                 on_response=lambda report: log.emit(
@@ -118,8 +127,9 @@ def run(settings: dict, client, log):
                 output, client, settings["judge_model"], log,
                 sample_id=sample_id, round_idx=round_idx,
                 judge_max_tokens=settings["judge_max_tokens"],
-                reward_polarity=settings.get("reward_polarity", "normal"),
+                reward_polarity=reward_polarity,
                 seed_policy=settings.get("writing_seed_policy", "fixed"),
+                random_seed=settings.get("random_reward_seed", 0),
             )
             histories[sample_id].append(result)
             rewards.append(result["reward"])

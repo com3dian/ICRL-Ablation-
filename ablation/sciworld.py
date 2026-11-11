@@ -73,26 +73,28 @@ def _original_components():
     return SciWorldConfig, load_envs, raw_icl
 
 
-def _history_block(history: list[dict], limit: int | None) -> str:
+def _history_block(history: list[dict], limit: int | None, *, include_rewards: bool = True) -> str:
     selected = history if limit is None else history[-limit:] if limit else []
     blocks = []
     for number, attempt in enumerate(selected, 1):
         steps = []
         for step in attempt["steps"]:
-            steps.append(
-                f"{step['action']} -> {step['observation']} "
-                f"(reward={format_feedback(step.get('shown_reward', step['reward']))})"
-            )
-        blocks.append(
-            f"<Attempt {number}>\n" + "\n".join(steps)
-            + f"\nTotal reward: {format_feedback(attempt.get('shown_reward', attempt['reward']))}\n</Attempt>"
-        )
+            line = f"{step['action']} -> {step['observation']}"
+            if include_rewards:
+                line += f" (reward={format_feedback(step.get('shown_reward', step['reward']))})"
+            steps.append(line)
+        body = "\n".join(steps)
+        if include_rewards:
+            body += f"\nTotal reward: {format_feedback(attempt.get('shown_reward', attempt['reward']))}"
+        blocks.append(f"<Attempt {number}>\n{body}\n</Attempt>")
     return "\n".join(blocks)
 
 
 def _attempt(env, history, config, settings, client, log, *, sample_id: int, round_idx: int, bootstrap: bool, raw_icl):
     env.reset()
     task_description = env.env.taskdescription()
+    reward_polarity = settings.get("reward_polarity", "normal")
+    include_rewards = reward_polarity != "empty"
     if bootstrap:
         messages = copy.deepcopy(raw_icl[0])
         messages[0]["content"] = (
@@ -106,10 +108,15 @@ def _attempt(env, history, config, settings, client, log, *, sample_id: int, rou
     else:
         if round_idx % 2 == 0:
             instruction = config.exploration_instruction
-        else:
+        elif include_rewards:
             instruction = config.exploitation_instruction
+        else:
+            instruction = (
+                "Look at the previous attempts and use their actions and observations to complete the task."
+                + config.neutral_round_instruction
+            )
         prompt = config.task_prompt_cot.format(available_actions=config.available_actions)
-        previous = _history_block(history, settings["history"])
+        previous = _history_block(history, settings["history"], include_rewards=include_rewards)
         if previous:
             prompt += "\n<Attempts>\n" + previous + "\n</Attempts>"
         prompt += f"\n<Instructions>{instruction}</Instructions>\n{task_description}"
@@ -121,7 +128,9 @@ def _attempt(env, history, config, settings, client, log, *, sample_id: int, rou
         output = client.generate(settings["model"], messages, temperature=1.0, max_tokens=settings["max_tokens"])
         observation, state = env.step(output)
         reward = int(state.reward)
-        shown = shown_reward("sciworld", reward, settings.get("reward_polarity", "normal"))
+        shown = shown_reward("sciworld", reward, reward_polarity,
+                             step=step_idx + 1, random_seed=settings.get("random_reward_seed", 0),
+                             sample_id=sample_id, round_idx=round_idx)
         action = env.parse_action(output)
         step = {"step": step_idx + 1, "action": action, "observation": observation,
                 "reward": reward, "shown_reward": shown}
@@ -136,13 +145,13 @@ def _attempt(env, history, config, settings, client, log, *, sample_id: int, rou
         messages.append({"role": "assistant", "content": output})
         if state.finished:
             break
+        feedback = f" (Reward: {format_feedback(shown)})" if include_rewards else ""
         messages.append({
-            "role": "user", "content": observation
-            + f" (Reward: {format_feedback(shown)})\nAvailable objects: "
+            "role": "user", "content": observation + feedback + "\nAvailable objects: "
             + ", ".join(env.env.get_possible_objects()) + "\n" + config.available_actions,
         })
     total = sum(item["reward"] for item in steps)
-    shown_total = sum(item["shown_reward"] for item in steps)
+    shown_total = sum(item["shown_reward"] for item in steps) if include_rewards else None
     attempt = {"steps": steps, "reward": total, "shown_reward": shown_total,
                "finished": bool(state.finished)}
     log.emit(

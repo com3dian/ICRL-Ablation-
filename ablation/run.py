@@ -24,11 +24,13 @@ def parse_args():
     parser.add_argument("--model", choices=(*MODELS, "all"))
     parser.add_argument("--feedback", choices=(*LANGUAGES, "all"))
     parser.add_argument("--reward-polarity", choices=POLARITIES, default="normal",
-                        help="Reverse model-visible rewards while retaining true scores for evaluation")
+                        help="Use normal, flipped, random, or empty reward feedback; retain true scores for evaluation")
+    parser.add_argument("--random-reward-seed", type=int,
+                        help="Seed for random feedback (default: 0); saved and reused on resume")
     parser.add_argument("--writing-seed-policy", choices=("fixed", "judged"),
-                        help="Creative Writing round 0: default fixed for normal, judged for flipped")
+                        help="Creative Writing round 0: default fixed for normal, judged for other conditions")
     parser.add_argument("--game24-demo-policy", choices=("legacy", "unscored"),
-                        help="Game24 examples: default legacy for normal, unscored for flipped")
+                        help="Game24 examples: default legacy for normal, unscored for other conditions")
     parser.add_argument("--provider", choices=("surf", "cliproxy"), default="surf")
     parser.add_argument("--resume", type=Path, help="Resume one unfinished Game24 run from its output directory")
     parser.add_argument("--game24-data", type=Path, help="Puzzle CSV; defaults to ablation/data/24.csv for new runs; also overrides the saved path with --resume")
@@ -53,11 +55,15 @@ def parse_args():
     if args.bootstrap_attempts < 0 or args.start_index < 0:
         parser.error("--bootstrap-attempts and --start-index cannot be negative")
     if args.resume:
-        if any((args.task, args.model, args.feedback, args.judge_model, args.samples, args.rounds)) or args.reward_polarity != "normal" or args.writing_seed_policy is not None or args.game24_demo_policy is not None:
+        if any((args.task, args.model, args.feedback, args.judge_model, args.samples, args.rounds)) or args.reward_polarity != "normal" or args.writing_seed_policy is not None or args.game24_demo_policy is not None or args.random_reward_seed is not None:
             parser.error("--resume reads the saved configuration; do not combine it with condition overrides")
         if not (args.resume / "config.json").is_file() or not (args.resume / "events.jsonl").is_file():
             parser.error("--resume must point to a run directory containing config.json and events.jsonl")
         return args
+    if args.random_reward_seed is not None and args.reward_polarity != "random":
+        parser.error("--random-reward-seed requires --reward-polarity random")
+    if args.random_reward_seed is None:
+        args.random_reward_seed = 0
     if not all((args.task, args.model, args.feedback)):
         parser.error("--task, --model, and --feedback are required unless --resume is used")
     args.game24_data = args.game24_data or DATA_ROOT / "24.csv"
@@ -66,13 +72,13 @@ def parse_args():
         parser.error(f"--model {args.model} is not available for {args.provider}")
     tasks = TASKS if args.task == "all" else (args.task,)
     if args.writing_seed_policy is None:
-        args.writing_seed_policy = "judged" if args.reward_polarity == "flipped" else "fixed"
+        args.writing_seed_policy = "judged" if args.reward_polarity != "normal" else "fixed"
     if args.game24_demo_policy is None:
-        args.game24_demo_policy = "unscored" if args.reward_polarity == "flipped" else "legacy"
-    if args.reward_polarity == "flipped" and "creative_writing" in tasks and args.writing_seed_policy != "judged":
-        parser.error("Flipped Creative Writing requires --writing-seed-policy judged; use it for the matched normal run too")
-    if args.reward_polarity == "flipped" and "game24" in tasks and args.game24_demo_policy != "unscored":
-        parser.error("Flipped Game24 requires --game24-demo-policy unscored; use it for the matched normal run too")
+        args.game24_demo_policy = "unscored" if args.reward_polarity != "normal" else "legacy"
+    if args.reward_polarity != "normal" and "creative_writing" in tasks and args.writing_seed_policy != "judged":
+        parser.error(f"{args.reward_polarity.capitalize()} Creative Writing requires --writing-seed-policy judged; use it for the matched normal run too")
+    if args.reward_polarity != "normal" and "game24" in tasks and args.game24_demo_policy != "unscored":
+        parser.error(f"{args.reward_polarity.capitalize()} Game24 requires --game24-demo-policy unscored; use it for the matched normal run too")
     if "game24" in tasks and (not args.game24_data or not args.game24_data.is_file()):
         parser.error("Game24 puzzle file is missing; run 'python -m ablation.prepare_data' or pass --game24-data PATH")
     if "creative_writing" in tasks and (not args.writing_data or not args.writing_data.is_file()):
@@ -159,6 +165,7 @@ def main():
                     "invalid_generation_policy": "zero_reward_no_judge",
                     "feedback": feedback,
                     "reward_polarity": args.reward_polarity,
+                    "random_reward_seed": args.random_reward_seed,
                     "writing_seed_policy": args.writing_seed_policy,
                     "game24_demo_policy": args.game24_demo_policy,
                     "rounds": args.rounds or DEFAULT_ROUNDS[task], "samples": args.samples or DEFAULT_SAMPLES[task],

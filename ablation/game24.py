@@ -90,27 +90,29 @@ def _one_shot_with_feedback(policy: str = "legacy") -> str:
 
 
 def build_prompt(puzzle: str, history: list[dict], round_idx: int,
-                 history_limit: int | None, demo_policy: str = "legacy") -> str:
+                 history_limit: int | None, demo_policy: str = "legacy", *,
+                 include_rewards: bool = True) -> str:
     selected = history if history_limit is None else history[-history_limit:] if history_limit else []
-    parts = [_one_shot_with_feedback(demo_policy)]
+    parts = [_one_shot_with_feedback(demo_policy if include_rewards else "unscored")]
     for attempt in selected:
-        scores = attempt.get("shown_step_rewards", attempt["step_rewards"])
         annotated = attempt["response"]
-        # The original prompt gives feedback after each intermediate step.
-        for index in (1, 2, 3):
-            marker = re.compile(rf"(?=Step\s*{index + 1}\s*:|\*\*Answer\*\*\s*:)", re.I)
-            match = marker.search(annotated)
-            if match:
-                annotated = annotated[: match.start()] + f"<Reward: {format_feedback(scores[index - 1])}> " + annotated[match.start() :]
-        parts.append(
-            f"<attempt>\n**Prompt**: Input: {puzzle}\n{annotated}\n"
-            f"**Reward**: {format_feedback(attempt.get('shown_reward', attempt['reward']))}\n</attempt>"
-        )
+        if include_rewards:
+            scores = attempt.get("shown_step_rewards", attempt["step_rewards"])
+            # The original prompt gives feedback after each intermediate step.
+            for index in (1, 2, 3):
+                marker = re.compile(rf"(?=Step\s*{index + 1}\s*:|\*\*Answer\*\*\s*:)", re.I)
+                match = marker.search(annotated)
+                if match:
+                    annotated = annotated[: match.start()] + f"<Reward: {format_feedback(scores[index - 1])}> " + annotated[match.start() :]
+            annotated += f"\n**Reward**: {format_feedback(attempt.get('shown_reward', attempt['reward']))}"
+        parts.append(f"<attempt>\n**Prompt**: Input: {puzzle}\n{annotated}\n</attempt>")
     instruction = (
         "Examine previous attempts and try steps different from them."
         if round_idx % 2 == 0
         else "Use previous attempts and their rewards to improve the solution."
     )
+    if not include_rewards and round_idx % 2:
+        instruction = "Use previous attempts to improve the solution."
     parts.append(
         f"{instruction} Make exactly one attempt. Use all four input numbers once with + - * / to obtain 24. "
         "Write <answer>**Response** Step 1: ... (left: ...) Step 2: ... (left: ...) "
@@ -140,7 +142,7 @@ def evaluate(
     puzzle: str, response: str, judge, judge_model: str, log, *,
     sample_id: int, round_idx: int, judge_max_tokens: int = 1024,
     saved_steps: list[dict] | None = None,
-    reward_polarity: str = "normal",
+    reward_polarity: str = "normal", random_seed: int = 0,
 ) -> dict:
     saved_steps = saved_steps or []
     block_match = re.search(r"<answer>(.*?)</answer>", response, re.I | re.S)
@@ -152,22 +154,26 @@ def evaluate(
         # Invalid model formatting is a task failure, not a judge/API failure.
         if any(event.get("status") != "invalid_generation" for event in saved_steps):
             raise ValueError("Saved judge scores do not match the invalid generation")
+        shown = shown_reward("game24", 0, reward_polarity, status="invalid_generation")
         for index in range(len(saved_steps), 4):
             log.emit(
                 "eval_step", sample_id=sample_id, round=round_idx, step=index + 1,
                 judge_prompt="", judge_response="", parsed_score=None, reward=0,
-                shown_reward=0, display_reward=format_feedback(0), status="invalid_generation",
+                shown_reward=shown, display_reward=format_feedback(shown), status="invalid_generation",
             )
         return {"response": block if block_match else response, "answer": "", "step_rewards": [0, 0, 0, 0],
-            "shown_step_rewards": [0, 0, 0, 0], "step_statuses": ["invalid_generation"] * 4,
-            "reward": 0, "shown_reward": 0, "eval_status": "invalid_generation", **diagnostics(puzzle, "")}
+            "shown_step_rewards": [shown] * 4, "step_statuses": ["invalid_generation"] * 4,
+            "reward": 0, "shown_reward": shown, "eval_status": "invalid_generation", **diagnostics(puzzle, "")}
     if any(event.get("status") == "invalid_generation" for event in saved_steps):
         raise ValueError("Saved invalid-generation scores do not match the generated answer")
     parts = [step_matches.get(i, "") for i in (1, 2, 3)] + [answer]
     scores = [event["reward"] for event in saved_steps]
     statuses = [event["status"] for event in saved_steps]
-    shown_scores = [shown_reward("game24", event["reward"], reward_polarity,
-                                 step=event["step"], status=event["status"]) for event in saved_steps]
+    shown_scores = [event["shown_reward"] if "shown_reward" in event else
+                   shown_reward("game24", event["reward"], reward_polarity,
+                                 step=event["step"], status=event["status"],
+                                 random_seed=random_seed, sample_id=sample_id, round_idx=round_idx)
+                    for event in saved_steps]
     for index in range(len(saved_steps), 4):
         part = parts[index]
         prompt = _judge_prompt(puzzle, part, index)
@@ -184,7 +190,8 @@ def evaluate(
         valid = parsed in ((0, 1, 3) if index < 3 else (0, 10))
         score = parsed if valid else 0
         status = "ok" if valid else "invalid_judge_score"
-        shown = shown_reward("game24", score, reward_polarity, step=index + 1, status=status)
+        shown = shown_reward("game24", score, reward_polarity, step=index + 1, status=status,
+                             random_seed=random_seed, sample_id=sample_id, round_idx=round_idx)
         scores.append(score)
         statuses.append(status)
         shown_scores.append(shown)
@@ -195,7 +202,7 @@ def evaluate(
         )
     return {"response": block, "answer": answer, "step_rewards": scores,
             "shown_step_rewards": shown_scores, "step_statuses": statuses,
-            "reward": sum(scores), "shown_reward": sum(shown_scores),
+            "reward": sum(scores), "shown_reward": None if reward_polarity == "empty" else sum(shown_scores),
             "eval_status": "ok", **diagnostics(puzzle, answer)}
 
 
@@ -286,7 +293,8 @@ def run(settings: dict, client, log):
                 rewards.append(completed[key]["reward"])
                 continue
             prompt = build_prompt(puzzle, histories[sample_id], round_idx, settings["history"],
-                                  settings.get("game24_demo_policy", "legacy"))
+                                  settings.get("game24_demo_policy", "legacy"),
+                                  include_rewards=reward_polarity != "empty")
             saved = pending.pop(key, None)
             if saved is None:
                 output = client.generate(
@@ -308,6 +316,7 @@ def run(settings: dict, client, log):
                 sample_id=sample_id, round_idx=round_idx,
                 judge_max_tokens=settings["judge_max_tokens"], saved_steps=saved_steps,
                 reward_polarity=reward_polarity,
+                random_seed=settings.get("random_reward_seed", 0),
             )
             histories[sample_id].append(result)
             rewards.append(result["reward"])

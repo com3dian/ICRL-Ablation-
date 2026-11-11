@@ -67,9 +67,9 @@ def spell_reward(score: int, language: str) -> str:
     raise ValueError(f"Unknown feedback language: {language}")
 
 
-def format_feedback(score: int) -> str:
+def format_feedback(score: int | None) -> str:
     """The single numeric feedback boundary instrumented by dowhen."""
-    label = str(score)
+    label = "" if score is None else str(score)
     return label
 
 
@@ -83,7 +83,7 @@ def feedback_language(language: str):
         return
 
     def replace_label(score):
-        return {"label": spell_reward(score, language)}
+        return {"label": "" if score is None else spell_reward(score, language)}
 
     handler = do(replace_label).when(format_feedback, "return label")
     try:

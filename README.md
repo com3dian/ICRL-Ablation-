@@ -112,6 +112,28 @@ The judge or environment still produces the **true** `reward` used in plots and 
 
 Math uses its separate runner. From `experiments/math`, in the environment used for that experiment, run `python math_bench.py flip_rewards=true postfix=flipped_reward` for deterministic `1 - true_reward` feedback. Its saved attempts keep the original score in `extra_fields.real_reward`; the `reward` field drives the model's history and sorting. Use `flip_rewards=false` for a new matched control. An invalid Math reward-model response now fails the run instead of being converted into zero and accidentally appearing as a perfect flipped score.
 
+### Random-reward condition
+
+Use `--reward-polarity random` for feedback sampled independently of the true score. For a Game24 smoke test:
+
+```bash
+python -m ablation.run --provider cliproxy --task game24 --model gpt6luna --feedback numeric --reward-polarity random --random-reward-seed 0 --samples 1 --rounds 2
+```
+
+Remove `--samples 1 --rounds 2` for the full experiment. Two rounds let the model receive the first attempt's random feedback. This condition still calls the judge to record true scores for evaluation; only model-visible rewards change. Game24 samples uniformly from `{0, 1, 3}` per intermediate step and `{0, 10}` for the final answer. Creative Writing samples uniformly from integers 1–10. ScienceWorld samples uniformly from integers −100 through 100 per environment step; this is a uniform noise control, not a match to the observed reward distribution. Attempt totals sum the shown step rewards. Failed evaluations retain the existing zero-feedback handling.
+
+The seed (default 0) is saved as `random_reward_seed` in `config.json`. Each draw is keyed by seed, task, sample, round, and step, so feedback is reproducible across languages and Game24 resumes. Random conditions use the same `unscored` Game24 examples and `judged` writing seed policy as flipped conditions; use those policies for matched normal runs too. Outputs are stored under `<task>/<model>/<feedback>/random/<run-id>/` and labeled `random` in the dashboard, whose scores remain true rewards. Resume a random Game24 run using its saved output directory, without adding polarity or seed overrides.
+
+### Empty-reward condition
+
+Use `--reward-polarity empty` to keep prior attempts in context while removing their reward labels and values. Game24 also uses unscored worked examples, and ScienceWorld hides the immediate reward in each observation message. Judges and the environment still supply numeric scores for evaluation, including judged round 0 in Creative Writing.
+
+```bash
+.conda/ablation/bin/python -m ablation.run --task game24 --model gpt6luna --provider cliproxy --feedback numeric --reward-polarity empty --samples 1 --rounds 2
+```
+
+This also works with `--task creative_writing`, `--task sciworld`, or `--task all`. Use one feedback format for this condition since there are no values to render. Runs are saved under `<feedback>/empty/<run-id>/` and listed as `empty` in the dashboard. The event log records `shown_reward: null` and a blank `display_reward`. For matched normal runs use `--game24-demo-policy unscored` and/or `--writing-seed-policy judged` as applicable.
+
 To continue an interrupted **Game24** run later, with its saved provider, models, feedback, and data (so the relevant API must be reachable), use:
 
 ```bash
@@ -135,7 +157,7 @@ From the repository root, launch the local-only live dashboard with the ablation
 .conda/ablation/bin/python -m ablation.dashboard
 ```
 
-The dashboard refreshes every two seconds and shows per-step/per-attempt numeric rewards and their displayed text. The run dropdown includes each run's local date/time and status (`running`, `succeeded`, `failed`, or `incomplete`); failed runs remain listed. For Game24, its main trial-by-trial curve is the mean rule-based success rate (correct expression using all four numbers), as in Figure 2 of the paper. A separate curve shows the mean total judge reward, and four smaller curves show the mean judge reward for Steps 1-3 and the final answer separately. Other tasks show mean numeric reward by trial. Shading is ±1 standard error across evaluated samples, and an open dot marks a partial trial. Hover over a chart to see the nearest iteration's y value, a vertical guide, and its iteration label on the x axis. With only trial 0 available, you will see one point; the line appears when trial 1 begins. The dashboard reads the local output directory and does not call SURF. Restart it after updating the code to see the new charts.
+The dashboard refreshes every two seconds and shows per-step/per-attempt numeric rewards and their displayed text. The run dropdown includes each run's local date/time and status (`running`, `succeeded`, `failed`, or `incomplete`); failed runs remain listed. For Game24, its main trial-by-trial curve is the mean rule-based success rate (correct expression using all four numbers), as in Figure 2 of the paper. A separate curve shows the mean total judge reward, and four smaller curves show the mean judge reward for Steps 1-3 and the final answer separately. Other tasks show mean numeric reward by trial. Shading is ±1 standard error across evaluated samples, and an open dot marks a partial trial. Hover over a chart to see the nearest iteration's y value, a vertical guide, and its iteration label on the x axis. With only trial 0 available, you will see one point; the line appears when trial 1 begins. The dashboard reads the local output directory and does not call SURF. Select a task, then check multiple runs to overlay their curves with a shared color legend. The uncertainty controls choose standard error or sample standard deviation across puzzles, scaled by 1×, 2×, or 3×. Standard deviation requires at least two samples. The curve control offers raw means, EMA on all iterations, or EMA using only odd iterations (1, 3, 5, …), with adjustable α (default 0.30). EMA bands retain the raw across-puzzle spread at each included iteration and are centered on the smoothed mean. Bands are clipped at score limits on bounded Game24 charts. The Inspect run dropdown selects which run supplies the event table. Restart it after updating the code to see the new controls.
 
 ## Game of 24
 

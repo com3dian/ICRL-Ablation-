@@ -176,13 +176,25 @@ class FeedbackTests(unittest.TestCase):
             config.write_text(json.dumps(settings))
             self.assertEqual(ablation_run._resume_settings(root)["game24_data"], str(data.resolve()))
 
-    def test_flipped_cli_defaults_and_matched_normal_settings(self):
-        with patch("sys.argv", ["ablation.run", "--task", "all", "--model", "gpt6luna",
-                                "--provider", "cliproxy", "--feedback", "numeric",
-                                "--reward-polarity", "flipped"]):
-            args = ablation_run.parse_args()
-        self.assertEqual((args.game24_demo_policy, args.writing_seed_policy),
-                         ("unscored", "judged"))
+    def test_reward_control_cli_defaults_and_matched_normal_settings(self):
+        data_dir = tempfile.TemporaryDirectory()
+        self.addCleanup(data_dir.cleanup)
+        data_root = Path(data_dir.name)
+        (data_root / "24.csv").touch()
+        (data_root / "data_100_random_text.txt").touch()
+        data_patch = patch.object(ablation_run, "DATA_ROOT", data_root)
+        data_patch.start()
+        self.addCleanup(data_patch.stop)
+        for polarity in ("flipped", "random", "empty"):
+            with self.subTest(polarity=polarity), patch("sys.argv", [
+                "ablation.run", "--task", "all", "--model", "gpt6luna",
+                "--provider", "cliproxy", "--feedback", "numeric",
+                "--reward-polarity", polarity,
+            ]):
+                args = ablation_run.parse_args()
+            self.assertEqual((args.game24_demo_policy, args.writing_seed_policy),
+                             ("unscored", "judged"))
+            self.assertEqual(args.random_reward_seed, 0)
         with patch("sys.argv", ["ablation.run", "--task", "all", "--model", "gpt6luna",
                                 "--provider", "cliproxy", "--feedback", "numeric",
                                 "--game24-demo-policy", "unscored",
@@ -191,6 +203,46 @@ class FeedbackTests(unittest.TestCase):
         self.assertEqual(args.reward_polarity, "normal")
         self.assertEqual((args.game24_demo_policy, args.writing_seed_policy),
                          ("unscored", "judged"))
+
+    def test_random_rewards_are_reproducible_and_independent_of_true_scores(self):
+        for task, step, valid in (("game24", 1, {0, 1, 3}), ("game24", 4, {0, 10}),
+                                  ("creative_writing", None, set(range(1, 11))),
+                                  ("sciworld", 1, set(range(-100, 101)))):
+            with self.subTest(task=task, step=step):
+                def draws(reward, seed=17):
+                    return [shown_reward(task, reward, "random", step=step,
+                                         random_seed=seed, sample_id=sample, round_idx=2)
+                            for sample in range(64)]
+                values = draws(min(valid))
+                self.assertEqual(values, draws(max(valid)))
+                self.assertEqual(values, draws(min(valid)))
+                self.assertTrue(set(values) <= valid)
+                self.assertGreater(len(set(values)), 1)
+                self.assertNotEqual(values, draws(min(valid), seed=18))
+        for status in ("invalid_generation", "invalid_judge_score"):
+            self.assertEqual(shown_reward("game24", 0, "random", step=4, status=status), 0)
+
+    def test_random_run_saves_seed_for_resume(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            data = root / "24.csv"
+            data.write_text("1 2 3 4\n", encoding="utf-8")
+            with patch.object(events, "OUTPUT_ROOT", root / "outputs"), \
+                 patch("ablation.run.SurfClient"), \
+                 patch("ablation.run._run_task", return_value={}) as run_task, \
+                 patch("ablation.run.plot_run"), patch("builtins.print"), \
+                 patch("sys.argv", [
+                     "ablation.run", "--task", "game24", "--model", "gpt6luna",
+                     "--provider", "cliproxy", "--feedback", "numeric",
+                     "--reward-polarity", "random", "--random-reward-seed", "17",
+                     "--game24-data", str(data),
+                 ]):
+                ablation_run.main()
+            config_path, = (root / "outputs").rglob("config.json")
+            settings = ablation_run._resume_settings(config_path.parent)
+            self.assertEqual(settings["random_reward_seed"], 17)
+            self.assertEqual(settings["reward_polarity"], "random")
+            self.assertEqual(run_task.call_args.args[1]["random_reward_seed"], 17)
 
     def test_flipped_game24_keeps_true_score_and_uses_shown_history(self):
         class FakeJudge:
@@ -222,7 +274,7 @@ class FeedbackTests(unittest.TestCase):
         self.assertEqual((first["reward"], first["shown_reward"], first["display_reward"]),
                          (0, 3, "three"))
 
-    def test_flipped_writing_judges_seed_and_keeps_true_score(self):
+    def test_writing_reward_controls_keep_true_score(self):
         class FakeJudge:
             def generate(self, *args, **kwargs):
                 return "Coherency score: 8"
@@ -234,26 +286,35 @@ class FeedbackTests(unittest.TestCase):
             def emit(self, event, **fields):
                 self.records.append((event, fields))
 
-        log = FakeLog()
-        with feedback_language("fr"):
-            result = evaluate_writing("<answer>Passage: Bonjour.</answer>", FakeJudge(),
-                                      MODELS["gpt6luna"], log, sample_id=0, round_idx=0,
-                                      reward_polarity="flipped", seed_policy="judged")
-            prompt = writing_prompt("End.", [result], 1, None)
-        self.assertEqual((result["reward"], result["shown_reward"]), (8, 3))
-        self.assertIn("**Reward**: trois", prompt)
-        self.assertEqual(log.records[0][1]["status"], "ok")
-        self.assertEqual(log.records[0][1]["display_reward"], "trois")
+        for polarity in ("flipped", "random", "empty"):
+            log = FakeLog()
+            with feedback_language("fr"):
+                result = evaluate_writing("<answer>Passage: Bonjour.</answer>", FakeJudge(),
+                                          MODELS["gpt6luna"], log, sample_id=0, round_idx=0,
+                                          reward_polarity=polarity, seed_policy="judged", random_seed=17)
+                prompt = writing_prompt("End.", [result], 1, None, include_rewards=polarity != "empty")
+            shown = shown_reward("creative_writing", 8, polarity, random_seed=17)
+            self.assertEqual((result["reward"], result["shown_reward"]), (8, shown))
+            self.assertIn("Passage: Bonjour.", prompt)
+            self.assertEqual(log.records[0][1]["status"], "ok")
+            if polarity == "empty":
+                self.assertIsNone(shown)
+                self.assertNotIn("reward", prompt.lower())
+                self.assertEqual(log.records[0][1]["display_reward"], "")
+            else:
+                self.assertIn(f"**Reward**: {spell_reward(shown, 'fr')}", prompt)
+                self.assertEqual(log.records[0][1]["display_reward"], spell_reward(shown, "fr"))
 
-        class InvalidJudge:
-            def generate(self, *args, **kwargs):
-                return "No numeric score"
+            class InvalidJudge:
+                def generate(self, *args, **kwargs):
+                    return "No numeric score"
 
-        invalid = evaluate_writing("<answer>Passage: Bonjour.</answer>", InvalidJudge(),
-                                   MODELS["gpt6luna"], log, sample_id=0, round_idx=1,
-                                   reward_polarity="flipped")
-        self.assertEqual((invalid["reward"], invalid["shown_reward"]), (0, 0))
-        self.assertEqual(invalid["eval_status"], "invalid_judge_score")
+            invalid = evaluate_writing("<answer>Passage: Bonjour.</answer>", InvalidJudge(),
+                                       MODELS["gpt6luna"], log, sample_id=0, round_idx=1,
+                                       reward_polarity=polarity)
+            self.assertEqual((invalid["reward"], invalid["shown_reward"]),
+                             (0, None if polarity == "empty" else 0))
+            self.assertEqual(invalid["eval_status"], "invalid_judge_score")
 
     def test_game24_demo_and_history_rendered_as_words(self):
         history = [{"response": "Step 1: a\nStep 2: b\nStep 3: c\n**Answer**: d",
@@ -266,6 +327,10 @@ class FeedbackTests(unittest.TestCase):
         self.assertIn("<Reward: three> Step 2", prompt)
         self.assertIn("<Reward: one> Step 3", prompt)
         self.assertIn("**Reward**: fourteen", prompt)
+        empty = game24_prompt("1 2 3 4", history, 1, None, include_rewards=False)
+        self.assertIn(history[0]["response"], empty)
+        self.assertIn("Input: 4 4 6 8", empty)
+        self.assertNotIn("reward", empty.lower())
 
     def test_game24_accepts_plain_or_bold_judge_answer(self):
         for response in ("Answer: 0", "**Answer**: 0"):
@@ -373,8 +438,8 @@ class FeedbackTests(unittest.TestCase):
             self.assertEqual(records[-2]["eval_status"], "invalid_generation")
 
     def test_game24_resume_reuses_partial_judge_scores(self):
-        for saved_count in (2, 4):
-            with self.subTest(saved_count=saved_count), tempfile.TemporaryDirectory() as temporary:
+        for polarity, saved_count in ((p, n) for p in ("flipped", "random", "empty") for n in (2, 4)):
+            with self.subTest(polarity=polarity, saved_count=saved_count), tempfile.TemporaryDirectory() as temporary:
                 run_dir = Path(temporary) / "run"
                 run_dir.mkdir()
                 puzzle_file = Path(temporary) / "24.csv"
@@ -384,7 +449,7 @@ class FeedbackTests(unittest.TestCase):
                     "rounds": 1, "history": None, "model": MODELS["gpt6luna"],
                     "judge_model": MODELS["gpt6luna"], "max_tokens": 1000,
                     "judge_max_tokens": 1024, "_resume_path": str(run_dir),
-                    "reward_polarity": "flipped", "game24_demo_policy": "unscored",
+                    "reward_polarity": polarity, "random_reward_seed": 17, "game24_demo_policy": "unscored",
                 }
                 (run_dir / "config.json").write_text(json.dumps({"task": "game24"}), encoding="utf-8")
                 prior = [
@@ -393,7 +458,9 @@ class FeedbackTests(unittest.TestCase):
                 ]
                 for step, score in enumerate((3, 0, 1, 0)[:saved_count], start=1):
                     prior.append({"event": "eval_step", "round": 0, "sample_id": 0,
-                                  "step": step, "reward": score, "status": "ok"})
+                                  "step": step, "reward": score, "status": "ok",
+                                  "shown_reward": shown_reward("game24", score, polarity,
+                                                               step=step, random_seed=17)})
                 prior.append({"event": "run_error", "error_type": "APIStatusError"})
                 event_path = run_dir / "events.jsonl"
                 event_path.write_text("".join(json.dumps(event) + "\n" for event in prior), encoding="utf-8")
@@ -422,8 +489,14 @@ class FeedbackTests(unittest.TestCase):
                 self.assertEqual(len(judge.prompts), 4 - saved_count)
                 self.assertEqual(attempts[0]["step_rewards"], [3, 0, 1, 0])
                 self.assertEqual(attempts[0]["reward"], 4)
-                self.assertEqual(attempts[0]["shown_step_rewards"], [0, 3, 2, 10])
-                self.assertEqual(attempts[0]["shown_reward"], 15)
+                expected = [shown_reward("game24", score, polarity, step=step, random_seed=17)
+                            for step, score in enumerate((3, 0, 1, 0), start=1)]
+                self.assertEqual(attempts[0]["shown_step_rewards"], expected)
+                self.assertEqual(attempts[0]["shown_reward"],
+                                 None if polarity == "empty" else sum(expected))
+                if polarity == "empty":
+                    self.assertEqual(attempts[0]["shown_step_rewards"], [None] * 4)
+                    self.assertEqual(attempts[0]["display_reward"], "")
                 self.assertEqual(len(attempts), 1)
                 self.assertEqual(len([event for event in records if event["event"] == "round_end"]), 1)
                 reused = next(event for event in records if event["event"] == "reuse_generation")
@@ -476,7 +549,8 @@ class FeedbackTests(unittest.TestCase):
                 self.records.append((event, fields))
 
         config = SimpleNamespace(task_prompt_cot="Task {available_actions}", available_actions="move",
-                                 exploration_instruction="Explore", exploitation_instruction="Exploit")
+                                 exploration_instruction="Explore", exploitation_instruction="Exploit rewards",
+                                 neutral_round_instruction="\nTry to complete the task.")
         settings = {"history": None, "max_env_steps": 2, "model": "fake", "max_tokens": 8}
         client, log = FakeClient(), FakeLog()
         with feedback_language("en"):
@@ -498,6 +572,34 @@ class FeedbackTests(unittest.TestCase):
         flipped_step = next(fields for event, fields in flipped_log.records if event == "eval_step")
         self.assertEqual((flipped_step["reward"], flipped_step["shown_reward"],
                           flipped_step["display_reward"]), (3, -3, "minus three"))
+
+        settings.update(reward_polarity="random", random_reward_seed=17)
+        random_client, random_log = FakeClient(), FakeLog()
+        with feedback_language("en"):
+            attempt = scienceworld_attempt(FakeEnv(), [], config, settings,
+                                           random_client, random_log,
+                                           sample_id=0, round_idx=0, bootstrap=False, raw_icl=[])
+        expected = [shown_reward("sciworld", score, "random", step=step, random_seed=17)
+                    for step, score in enumerate((3, 0), start=1)]
+        self.assertEqual(attempt["reward"], 3)
+        self.assertEqual([step["shown_reward"] for step in attempt["steps"]], expected)
+        self.assertEqual(attempt["shown_reward"], sum(expected))
+        self.assertIn(f"(Reward: {spell_reward(expected[0], 'en')})",
+                      random_client.prompts[1][-1]["content"])
+
+        settings["reward_polarity"] = "empty"
+        empty_client, empty_log = FakeClient(), FakeLog()
+        with feedback_language("en"):
+            empty_attempt = scienceworld_attempt(FakeEnv(), [attempt], config, settings,
+                                                 empty_client, empty_log, sample_id=0,
+                                                 round_idx=1, bootstrap=False, raw_icl=[])
+        self.assertIn("move -> Observation: moved", empty_client.prompts[0][0]["content"])
+        self.assertIn("Observation: moved\nAvailable objects: cup", empty_client.prompts[1][-1]["content"])
+        self.assertNotIn("reward", str(empty_client.prompts).lower())
+        self.assertEqual((empty_attempt["reward"], empty_attempt["shown_reward"]), (3, None))
+        for _, fields in empty_log.records:
+            self.assertIsNone(fields["shown_reward"])
+            self.assertEqual(fields["display_reward"], "")
 
     def test_scienceworld_legacy_method_aliases(self):
         class CurrentEnv:
@@ -575,19 +677,48 @@ class FeedbackTests(unittest.TestCase):
                 self.assertIn("new Date(r.started_at).toLocaleString()", page)
                 self.assertIn("esc(r.status)", page)
 
-    def test_flipped_run_has_separate_path_and_dashboard_label(self):
-        with tempfile.TemporaryDirectory() as temporary, patch.object(events, "OUTPUT_ROOT", Path(temporary)):
-            config = {"task": "game24", "model": "test", "model_alias": "test",
-                      "feedback": "numeric", "reward_polarity": "flipped", "samples": 1}
-            log = EventLog("game24", "test", "numeric", config)
-            try:
-                self.assertEqual(log.path.parent.name, "flipped")
-            finally:
-                log.close()
-            with patch.object(dashboard, "OUTPUT_ROOT", Path(temporary)):
-                listed = dashboard.app.test_client().get("/api/runs").json
-            self.assertEqual(len(listed), 1)
-            self.assertEqual(listed[0]["reward_polarity"], "flipped")
+    def test_dashboard_completion_filter_requires_completed_iteration_50(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            run_dir = root / "game24" / "test" / "numeric" / "run"
+            run_dir.mkdir(parents=True)
+            (run_dir / "config.json").write_text(json.dumps({
+                "task": "game24", "model": "test", "feedback": "numeric", "samples": 2,
+                "rounds": 51,
+            }), encoding="utf-8")
+            summary = run_dir / "summary.json"
+            with patch.object(dashboard, "OUTPUT_ROOT", root):
+                client = dashboard.app.test_client()
+                for completed_rounds in (1, 50, 51):
+                    with self.subTest(completed_rounds=completed_rounds):
+                        summary.write_text(json.dumps({"rounds_completed": completed_rounds}))
+                        run = client.get("/api/runs").json[0]
+                        self.assertTrue(run["finished"])
+                        self.assertEqual(run["reached_iteration_50"], completed_rounds == 51)
+                summary.unlink()
+                event_path = run_dir / "events.jsonl"
+                event_path.write_text(json.dumps({"event": "round_end", "round": 49}) + "\n"
+                                      + json.dumps({"event": "attempt_end", "round": 50,
+                                                    "sample_id": 0, "detail": "x" * 10000}) + "\n")
+                self.assertFalse(client.get("/api/runs").json[0]["reached_iteration_50"])
+                with event_path.open("a") as stream:
+                    stream.write(json.dumps({"event": "round_end", "round": 50}) + "\n")
+                self.assertTrue(client.get("/api/runs").json[0]["reached_iteration_50"])
+
+    def test_reward_control_runs_have_separate_paths_and_dashboard_labels(self):
+        for polarity in ("flipped", "random", "empty"):
+            with tempfile.TemporaryDirectory() as temporary, patch.object(events, "OUTPUT_ROOT", Path(temporary)):
+                config = {"task": "game24", "model": "test", "model_alias": "test",
+                          "feedback": "numeric", "reward_polarity": polarity, "samples": 1}
+                log = EventLog("game24", "test", "numeric", config)
+                try:
+                    self.assertEqual(log.path.parent.name, polarity)
+                finally:
+                    log.close()
+                with patch.object(dashboard, "OUTPUT_ROOT", Path(temporary)):
+                    listed = dashboard.app.test_client().get("/api/runs").json
+                self.assertEqual(len(listed), 1)
+                self.assertEqual(listed[0]["reward_polarity"], polarity)
 
     def test_plot_reads_numeric_rewards(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -635,7 +766,9 @@ class FeedbackTests(unittest.TestCase):
                 self.assertTrue(first["complete"])
                 self.assertEqual(first["success"]["mean"], 0.5)
                 self.assertEqual(first["success"]["sem"], 0.5)
+                self.assertAlmostEqual(first["success"]["std"], 0.5 ** 0.5)
                 self.assertEqual(first["reward"]["mean"], 7.0)
+                self.assertAlmostEqual(first["reward"]["std"], 98 ** 0.5)
                 self.assertEqual([part["mean"] for part in first["steps"]], [1.5, 0.5, 0.0, 5.0])
                 with event_path.open("a", encoding="utf-8") as stream:
                     stream.write(json.dumps({"event": "attempt_end", "round": 1, "sample_id": 0,
@@ -644,6 +777,7 @@ class FeedbackTests(unittest.TestCase):
                 self.assertEqual(len(second), 2)
                 self.assertFalse(second[1]["complete"])
                 self.assertEqual(second[1]["reward"]["count"], 1)
+                self.assertIsNone(second[1]["reward"]["std"])
                 self.assertEqual(second[1]["success"]["mean"], 1.0)
                 self.assertEqual(client.get("/api/metrics", query_string={"run": run_id})
                                  .json["rounds"][1]["reward"]["count"], 1)
