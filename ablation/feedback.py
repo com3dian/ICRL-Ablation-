@@ -1,4 +1,4 @@
-"""Change only the reward label shown in prompts, using dowhen instrumentation."""
+"""Render or hide reward labels in prompts using dowhen instrumentation."""
 
 from contextlib import contextmanager
 
@@ -74,16 +74,16 @@ def format_feedback(score: int | None) -> str:
 
 
 @contextmanager
-def feedback_language(language: str):
-    """Temporarily replace the local `label` just before it is returned."""
+def feedback_language(language: str, *, empty: bool = False):
+    """Use dowhen to spell or clear `label` just before it is returned."""
     if language not in LANGUAGES:
         raise ValueError(f"Unknown feedback language: {language}")
-    if language == "numeric":
+    if language == "numeric" and not empty:
         yield
         return
 
     def replace_label(score):
-        return {"label": "" if score is None else spell_reward(score, language)}
+        return {"label": "" if empty or score is None else spell_reward(score, language)}
 
     handler = do(replace_label).when(format_feedback, "return label")
     try:

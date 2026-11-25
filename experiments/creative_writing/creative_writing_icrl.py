@@ -16,10 +16,13 @@ from vllm import LLM, SamplingParams
 from concurrent.futures import ThreadPoolExecutor
 
 
+from dotenv import load_dotenv
 from openai import OpenAI
 import os
 num_char = 200
 
+
+load_dotenv()
 
 api_eval = False  # Set to False to use vLLM instead of OpenAI
 openrouter_eval = True  # Set to True to use OpenRouter API
@@ -52,10 +55,11 @@ if not api_eval and not openrouter_eval:
               gpu_memory_utilization=0.95)
 elif api_eval:
     # OpenAI API initialization
-    client = OpenAI(api_key="Your_API_Key")
+    client = OpenAI()
 elif openrouter_eval:
-    # OpenRouter configuration (exactly following math_bench.py)
-    OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "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")
+    OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
+    if not OPENROUTER_API_KEY:
+        raise RuntimeError("Set OPENROUTER_API_KEY to use OpenRouter.")
     OPENROUTER_MODEL = "microsoft/phi-4"
     openrouter_client = OpenAI(base_url="https://openrouter.ai/api/v1", api_key=OPENROUTER_API_KEY)
 

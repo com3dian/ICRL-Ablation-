@@ -1,5 +1,6 @@
 """OpenAI-compatible SURF and Cliproxy transports."""
 
+import logging
 import os
 import time
 from pathlib import Path
@@ -17,6 +18,7 @@ SURF_MODELS = {
 }
 CLIPROXY_MODELS = {"gpt6luna": "gpt-6-luna", "gpt56luna": "gpt-5.6-luna"}
 MODELS = SURF_MODELS | CLIPROXY_MODELS
+logger = logging.getLogger(__name__)
 
 
 def generation_options(model: str) -> dict:
@@ -38,7 +40,7 @@ def judge_options(model: str) -> dict:
 
 
 class EmptyResponseError(RuntimeError):
-    """A provider returned no visible answer after its completion budget."""
+    """A provider returned no visible answer after retries were exhausted."""
 
 
 class SurfClient:
@@ -62,6 +64,7 @@ class SurfClient:
         max_tokens: int, reasoning_effort: str | None = None,
         retry_empty_budgets: tuple[int, ...] = (), on_response=None,
     ) -> str:
+        """Retry transient failures and empty answers without changing the prompt."""
         delays = (0, 5, 15, 30)
         budgets = (max_tokens, *retry_empty_budgets)
         if any(budget < 1 for budget in budgets):
@@ -84,6 +87,7 @@ class SurfClient:
                     )
                     choice = result.choices[0]
                     content = choice.message.content
+                    content_present = bool(content and content.strip())
                     extra = choice.message.model_extra or {}
                     details = getattr(result.usage, "completion_tokens_details", None) if result.usage else None
                     report = {
@@ -91,11 +95,11 @@ class SurfClient:
                         "completion_tokens": result.usage.completion_tokens if result.usage else None,
                         "reasoning_tokens": getattr(details, "reasoning_tokens", None),
                         "reasoning_present": bool(extra.get("reasoning") or extra.get("reasoning_content")),
-                        "content_present": bool(content),
+                        "content_present": content_present,
                     }
                     if on_response is not None:
                         on_response(report)
-                    if content:
+                    if content_present:
                         return content
                     if choice.finish_reason == "length" and budget_index < len(budgets) - 1:
                         break
@@ -104,6 +108,11 @@ class SurfClient:
                         f"completion_tokens={report['completion_tokens']}, "
                         f"reasoning_present={report['reasoning_present']}, budget={budget}"
                     )
+                except EmptyResponseError as exc:
+                    if attempt == len(delays) - 1:
+                        raise
+                    logger.warning("%s; retrying in %ss (%s/%s)", exc,
+                                   delays[attempt + 1], attempt + 1, len(delays) - 1)
                 except (APIConnectionError, APITimeoutError):
                     if attempt == len(delays) - 1:
                         raise

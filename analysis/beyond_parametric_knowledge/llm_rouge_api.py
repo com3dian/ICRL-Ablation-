@@ -19,13 +19,15 @@ from distinct_n.metrics import distinct_n_corpus_level
 
 from distinct_n.metrics import distinct_n_sentence_level
 
+from dotenv import load_dotenv
 from openai import OpenAI
 
 
 from concurrent.futures import ThreadPoolExecutor
 
 
-client = OpenAI(api_key="sk-C8z62BDhmo4EW1bqOn2TTmdFR29ocUeZXLExkdmGS1T3BlbkFJQcA3zOug-aNTm98KC0Wjsv549b3OgxEGn9TKJknXMA")
+load_dotenv()
+client = OpenAI()
 
 from rouge_score import rouge_scorer
 # from tqdm import tqdm

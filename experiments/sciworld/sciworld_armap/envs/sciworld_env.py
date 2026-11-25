@@ -13,7 +13,6 @@ logger = logging.getLogger("agent_frame")
 
 task_all = []
 import random
-import pdb
 
 max_steps_dict = {
     "boil": 100,
@@ -66,7 +65,7 @@ class SciWorldEnv(BaseEnv):
         gold_path: bool = False,
         **kwargs,
     ):
-        super().__init__(**kwargs)
+        super().__init__()
         self.task: SciWorldTask = task
         self.env = env
         if max_env_steps == -1:
@@ -74,6 +73,7 @@ class SciWorldEnv(BaseEnv):
         else:
             self.max_steps = max_env_steps
         self.gold_path = gold_path
+        self.simplifications = kwargs.get("simplifications", "easy")
         self.state = State()
         if kwargs.get("api_key", None):
             self.sent_transformer_model = DummyModel(kwargs.get("api_key"))
@@ -82,26 +82,58 @@ class SciWorldEnv(BaseEnv):
     
     @staticmethod
     def parse_action(llm_output: str) -> str:
-        llm_output = llm_output.strip()
-        pattern = re.compile(r"(?:.*Action: )?(.*)", re.DOTALL)
-        action = re.findall(pattern, llm_output)[0]
-        assert action is not None
-        return action
+        return llm_output.rsplit("Action:", 1)[-1].strip()
 
     def _check_max_steps(self, observation: str) -> str:
-        if self.state.steps >= self.max_steps:
+        if self.state.steps >= self.max_steps and not self.state.finished:
             self.state.finished = True
             observation += "\nTask Failed. You have exceeded the maximum number of steps."
         return observation
+
+    def _invalid_action(self, action: str, clarification: str = "") -> Tuple[str, State]:
+        action_text = action if len(action) <= 20 else f"{action[:20]}..."
+        observation = f"Your generated action '{action_text}' cannot be matched to a valid action."
+        if clarification:
+            observation += "\n" + clarification
+        self.state.invalid_action_count += 1
+        self.state.steps += 1
+        self.state.reward = 0
+        observation = self._check_max_steps(observation)
+        self.state.history.append({"role": "user", "content": observation})
+        return observation, self.state
     
     def step(self, llm_output: str) -> Tuple[str, State]:
+        previous_observation = self.state.history[-1]['content'] if self.state.history else ""
         self.state.history.append({
             "role": "assistant",
             "content": llm_output
         })
         llm_output = self.parse_action(llm_output)
 
-        valid_actions_list = getattr(self.state, 'valid_actions_list', self.env.get_valid_action_object_combinations())
+        # A clarification replaces the usual action space with numbered choices.
+        # Read those choices from the simulator observation, never the model reply.
+        choices = dict(re.findall(r"(?m)^\s*(\d+):[ \t]*(.+)$", previous_observation))
+        if "Ambiguous request" in previous_observation and choices:
+            if llm_output in choices or not llm_output:
+                action = llm_output
+            elif llm_output.isdecimal():
+                return self._invalid_action(llm_output, previous_observation)
+            else:
+                descriptions = list(dict.fromkeys(choices.values()))
+                matched, ranked = get_best_matched_action_using_sent_transformer(
+                    allowed_actions=descriptions, query=llm_output,
+                    model=self.sent_transformer_model, device="cpu")
+                if ranked[0][1] <= 0.8:
+                    return self._invalid_action(llm_output, previous_observation)
+                action = next(number for number, description in choices.items() if description == matched)
+            observation, _, done, info = self.env.step(action)
+            return self._record_step(observation, done, info)
+
+        if not llm_output:
+            return self._invalid_action(llm_output)
+        valid_actions_list = getattr(self.state, 'valid_actions_list', None)
+        if valid_actions_list is None:
+            valid_actions_list = self.env.get_valid_action_object_combinations()
         valid_actions_list = [x for x in valid_actions_list if 'reset' not in x] 
 
         if "focus" in llm_output.lower():
@@ -115,9 +147,7 @@ class SciWorldEnv(BaseEnv):
         best_match_score = 0.0
         action = None
         if len(valid_actions_list) == 0:
-            assert "Ambiguous request" in self.state.history[-2]['content'], \
-                f"Action is None for {llm_output}, valid_actions_list: {valid_actions_list}, best_match_score: {best_match_score}, all_possible_actions: {self.state.valid_actions_list}, previous_observation: {self.state.history[-2]['content']}"
-            valid_actions_list = [str(x) for x in range(len(self.state.history[-1]['content'].split('\n')[1:]))]
+            return self._invalid_action(llm_output)
 
         if len(valid_actions_list) > 0:
             action, topN = get_best_matched_action_using_sent_transformer(
@@ -128,33 +158,22 @@ class SciWorldEnv(BaseEnv):
             )
             best_match_score = topN[0][1]
 
-        if not (best_match_score > 0.8 or \
-            action in ['0','1','2','3','4','5','6','7','8','9','10','11','12','13','14','15','16','17','18','19','20'] or \
-            (len(valid_actions_list) == 0) ):
+        if best_match_score <= 0.8:
             old_num_moves = self.env.get_num_moves()
             observation, _, done, info = self.env.step(llm_output)
             new_num_moves = self.env.get_num_moves()
-            if old_num_moves == new_num_moves:
-                action_text = llm_output if len(llm_output) <= 20 else f"{llm_output[:20]}..."
-                observation = f"Your generated action '{action_text}' cannot be matched to a valid action."
-                self.state.invalid_action_count += 1
-                self.state.steps += 1
-                self.state.reward = 0
-                observation = self._check_max_steps(observation)
-                self.state.history.append({
-                    "role": "user",
-                    "content": observation,
-                })
-                return observation, self.state
+            if (old_num_moves == new_num_moves and not done and not info['reward']
+                    and "Ambiguous request" not in observation):
+                return self._invalid_action(llm_output)
             else:
                 # action is valid, continue normal step
                 pass
         else:
             observation, _, done, info = self.env.step(action)
         
-        if action is None:
-            pdb.set_trace()
-        
+        return self._record_step(observation, done, info)
+
+    def _record_step(self, observation, done, info):
         reward = info['reward']
         self.state.valid_actions_list = info['valid']
         observation = f"Observation: {observation}"
@@ -171,6 +190,6 @@ class SciWorldEnv(BaseEnv):
     
     def reset(self) -> Tuple[str, State]:
         self.state = State()
-        self.env.load(self.task.sub_task_name, self.task.variation_idx, simplificationStr="easy", generateGoldPath=self.gold_path)
+        self.env.load(self.task.sub_task_name, self.task.variation_idx, simplificationStr=self.simplifications, generateGoldPath=self.gold_path)
         obs, info = self.env.reset()
         return obs, info

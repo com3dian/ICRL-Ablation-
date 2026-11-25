@@ -3,6 +3,7 @@ import os
 import re
 import json
 import logging
+import subprocess
 from pathlib import Path
 import anyio
 from openai import AsyncOpenAI
@@ -39,7 +40,9 @@ class Methods(Enum):
 class SciWorldConfig:
     sw_output_path: str = "ICL/sw/"
     postfix: str = ""
-    commit_message: str = os.popen("git log -1 --pretty=%B").read().strip()
+    commit_message: str = subprocess.run(
+        ["git", "log", "-1", "--pretty=%B"], capture_output=True, text=True,
+    ).stdout.strip()
     
     # Experiment modes
     icrl_mode: Methods = Methods.ICRL
@@ -64,6 +67,9 @@ class SciWorldConfig:
     max_env_steps: int = 15
     num_envs: int = 4
     rounds: int = 40
+    variation_idx: int = 0
+    simplifications: str = "easy"
+    sciworld_reward_policy: str = "score_delta_failure_minus_100_v2"
     
     # Model configuration
     model_name: str = "gpt-4.1-mini"
@@ -208,7 +214,10 @@ def parse_args():
     if config.checkpoint_path:
         path = Path(config.checkpoint_path)
         config_path = path / "config.yaml"
-        config = OmegaConf.load(config_path)
+        saved_config = OmegaConf.load(config_path)
+        if saved_config.get("sciworld_reward_policy") != default_config.sciworld_reward_policy:
+            raise ValueError("Checkpoint predates the corrected ScienceWorld reward policy; start a new matched run")
+        config = OmegaConf.merge(default_config, saved_config)
         OmegaConf.set_struct(config, False)
         config.icrl_mode = Methods(config.icrl_mode.lower())
         config.checkpoint_path = path
@@ -269,6 +278,7 @@ def load_envs(num_envs, config, gold_path=False, micro_repeat=1):
     base_env = ScienceWorldEnvBase()
     
     task_names = base_env.get_task_names()
+    base_env.close()
     task_names.sort()
     if gold_path:
         task_names = task_names[:1]
@@ -281,7 +291,7 @@ def load_envs(num_envs, config, gold_path=False, micro_repeat=1):
     for i in range(num_envs):
         task_num = i 
         task_name = task_names[task_num]
-        var_num = 0
+        var_num = config.variation_idx
         
         for _ in range(micro_repeat):
             base_env = ScienceWorldEnvBase()
@@ -296,6 +306,7 @@ def load_envs(num_envs, config, gold_path=False, micro_repeat=1):
                 env=base_env,
                 gold_path=gold_path,
                 max_env_steps=config.max_env_steps,
+                simplifications=config.simplifications,
                 api_key=os.getenv("OPENAI_API_KEY") if config.use_openai_embedding else None
             )
                     
@@ -543,11 +554,13 @@ async def run_evaluation(config: SciWorldConfig, data: dict = None):
                     except Exception as e:
                         if not isinstance(e, KeyboardInterrupt):
                             logger.error(f"Error in {i}, {envs[i].env.taskdescription()}: {e}")
+                            envs[i].env.close()
                             base_env = ScienceWorldEnvBase()
                             sciworld_env = SciWorldEnv(
                                 task=envs[i].task,
                                 env=base_env,
                                 max_env_steps=config.max_env_steps,
+                                simplifications=config.simplifications,
                                 api_key=os.getenv("OPENAI_API_KEY") if config.use_openai_embedding else None
                             )
                             sciworld_env.reset()
@@ -573,6 +586,8 @@ async def run_evaluation(config: SciWorldConfig, data: dict = None):
     for start_round in range(config.rounds):
         if not start_round in data[0]['round_attempts']:
             break
+    for env in envs:
+        env.env.close()
     envs = load_envs(config.num_envs, config, gold_path=False)
     for round_idx in range(start_round, config.rounds):
         logger.info(f"Round {round_idx+1}/{config.rounds}...")
@@ -831,11 +846,13 @@ async def run_evaluation(config: SciWorldConfig, data: dict = None):
                                     extra_fields={"reflections": [{"role": "assistant", "content": "placeholder"}]},
                                 )
                             temperature = min(2, temperature * 1.2)
+                            envs[i].env.close()
                             base_env = ScienceWorldEnvBase()
                             sciworld_env = SciWorldEnv(
                                 task=envs[i].task,
                                 env=base_env,
                                 max_env_steps=config.max_env_steps,
+                                simplifications=config.simplifications,
                                 api_key=os.getenv("OPENAI_API_KEY") if config.use_openai_embedding else None
                             )
                             sciworld_env.reset()
@@ -919,7 +936,11 @@ async def main():
     data = None
     if config.checkpoint_path:
         data = load_data(config.checkpoint_path)
-    await run_evaluation(config, data)
+    try:
+        await run_evaluation(config, data)
+    finally:
+        for env in list(ScienceWorldEnvBase._icrl_instances):
+            env.close()
 
 if __name__ == "__main__":
     anyio.run(main)

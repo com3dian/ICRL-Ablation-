@@ -3,6 +3,7 @@
 import argparse
 import json
 import traceback
+from importlib.metadata import version
 from pathlib import Path
 
 from .client import (CLIPROXY_MODELS, MODELS, SURF_MODELS, SurfClient,
@@ -11,6 +12,8 @@ from .events import EventLog
 from .feedback import LANGUAGES, feedback_language
 from .plot import plot_run
 from .reward_polarity import POLARITIES
+from .sciworld_resume import (API400_BACKTRACK_LIMIT, API400_FIRST_STEP_RETRY_DELAYS,
+                             REWARD_POLICY, api400_backtrack_limit)
 
 TASKS = ("game24", "creative_writing", "sciworld")
 DEFAULT_SAMPLES = {"game24": 100, "creative_writing": 100, "sciworld": 29}
@@ -32,7 +35,14 @@ def parse_args():
     parser.add_argument("--game24-demo-policy", choices=("legacy", "unscored"),
                         help="Game24 examples: default legacy for normal, unscored for other conditions")
     parser.add_argument("--provider", choices=("surf", "cliproxy"), default="surf")
-    parser.add_argument("--resume", type=Path, help="Resume one unfinished Game24 run from its output directory")
+    parser.add_argument("--resume", type=Path, help="Resume one unfinished Game24 or ScienceWorld run")
+    parser.add_argument("--sciworld-resume-mode", choices=("auto", "strict", "restart-attempt"),
+                        help="ScienceWorld resume: replay with fallback (auto, default), require exact replay, or restart only the unfinished attempt")
+    parser.add_argument("--sciworld-tasks", nargs="+", help="Exact ScienceWorld task names; defaults to the original sorted 29-task selection")
+    parser.add_argument("--variation-idx", type=int, help="ScienceWorld variation index (default: 0)")
+    parser.add_argument("--sciworld-split", choices=("train", "dev", "test"),
+                        help="Require the selected variation to belong to this ScienceWorld split")
+    parser.add_argument("--simplifications", help="ScienceWorld simplifications (default: easy; use an empty string for none)")
     parser.add_argument("--game24-data", type=Path, help="Puzzle CSV; defaults to ablation/data/24.csv for new runs; also overrides the saved path with --resume")
     parser.add_argument("--writing-data", type=Path, default=DATA_ROOT / "data_100_random_text.txt", help="Writing prompts; defaults to ablation/data/data_100_random_text.txt")
     parser.add_argument("--start-index", type=int, default=900, help="Game24 offset, matching the original experiment")
@@ -54,12 +64,16 @@ def parse_args():
         parser.error("--history cannot be negative")
     if args.bootstrap_attempts < 0 or args.start_index < 0:
         parser.error("--bootstrap-attempts and --start-index cannot be negative")
+    if args.variation_idx is not None and args.variation_idx < 0:
+        parser.error("--variation-idx cannot be negative")
     if args.resume:
-        if any((args.task, args.model, args.feedback, args.judge_model, args.samples, args.rounds)) or args.reward_polarity != "normal" or args.writing_seed_policy is not None or args.game24_demo_policy is not None or args.random_reward_seed is not None:
+        if any((args.task, args.model, args.feedback, args.judge_model, args.samples, args.rounds, args.sciworld_tasks, args.sciworld_split)) or args.variation_idx is not None or args.simplifications is not None or args.reward_polarity != "normal" or args.writing_seed_policy is not None or args.game24_demo_policy is not None or args.random_reward_seed is not None:
             parser.error("--resume reads the saved configuration; do not combine it with condition overrides")
         if not (args.resume / "config.json").is_file() or not (args.resume / "events.jsonl").is_file():
             parser.error("--resume must point to a run directory containing config.json and events.jsonl")
         return args
+    if args.sciworld_resume_mode is not None:
+        parser.error("--sciworld-resume-mode requires --resume")
     if args.random_reward_seed is not None and args.reward_polarity != "random":
         parser.error("--random-reward-seed requires --reward-polarity random")
     if args.random_reward_seed is None:
@@ -71,6 +85,13 @@ def parse_args():
     if args.model != "all" and args.model not in available:
         parser.error(f"--model {args.model} is not available for {args.provider}")
     tasks = TASKS if args.task == "all" else (args.task,)
+    if "sciworld" not in tasks and (args.sciworld_split or args.sciworld_tasks or args.variation_idx is not None or args.simplifications is not None):
+        parser.error("ScienceWorld selection options require --task sciworld or all")
+    if args.sciworld_tasks:
+        if "sciworld" not in tasks or len(set(args.sciworld_tasks)) != len(args.sciworld_tasks):
+            parser.error("--sciworld-tasks requires ScienceWorld and unique task names")
+        if args.samples is not None and args.samples != len(args.sciworld_tasks):
+            parser.error("--samples must equal the number of --sciworld-tasks when both are specified")
     if args.writing_seed_policy is None:
         args.writing_seed_policy = "judged" if args.reward_polarity != "normal" else "fixed"
     if args.game24_demo_policy is None:
@@ -104,8 +125,18 @@ def _run_task(task: str, settings: dict, client, log):
 
 def _resume_settings(run_dir: Path, game24_data: Path | None = None) -> dict:
     settings = json.loads((run_dir / "config.json").read_text(encoding="utf-8"))
+    if settings["task"] == "sciworld":
+        if game24_data is not None:
+            raise ValueError("--game24-data does not apply to ScienceWorld")
+        if settings.get("sciworld_reward_policy") != REWARD_POLICY:
+            raise ValueError("This ScienceWorld run predates the corrected reward policy; start a new matched run")
+        for package, saved_version in settings.get("sciworld_dependencies", {}).items():
+            if version(package) != saved_version:
+                raise ValueError(f"ScienceWorld resume requires {package}=={saved_version}; restore the original environment")
+        settings["_resume_path"] = str(run_dir)
+        return settings
     if settings["task"] != "game24":
-        raise ValueError("--resume currently supports Game24 only")
+        raise ValueError("--resume supports Game24 and ScienceWorld only")
     data_path = game24_data or Path(settings["game24_data"])
     if not data_path.is_file():
         raise ValueError(
@@ -124,18 +155,28 @@ def main():
         run_dir = args.resume.resolve()
         try:
             settings = _resume_settings(run_dir, args.game24_data)
+            if args.sciworld_resume_mode is not None and settings["task"] != "sciworld":
+                raise ValueError("--sciworld-resume-mode applies only to ScienceWorld")
+            if settings["task"] == "sciworld":
+                settings["_sciworld_resume_mode"] = args.sciworld_resume_mode or "auto"
         except ValueError as exc:
             raise SystemExit(str(exc)) from exc
         client = SurfClient(provider=settings.get("provider", "surf"))
         log = EventLog.reopen(run_dir)
         try:
-            with feedback_language(settings["feedback"]):
-                log.emit(
-                    "run_resume", game24_data=settings["game24_data"], invalid_generation_policy="zero_reward_no_judge",
-                    judge_retry_budgets=[settings["judge_max_tokens"] * 2,
-                                         settings["judge_max_tokens"] * 4],
-                )
-                summary = _run_task("game24", settings, client, log)
+            with feedback_language(settings["feedback"], empty=settings.get("reward_polarity") == "empty"):
+                if settings["task"] == "game24":
+                    log.emit("run_resume", game24_data=settings["game24_data"],
+                             invalid_generation_policy="zero_reward_no_judge",
+                             judge_retry_budgets=[settings["judge_max_tokens"] * 2,
+                                                  settings["judge_max_tokens"] * 4])
+                else:
+                    log.emit("run_resume", sciworld_reward_policy=REWARD_POLICY,
+                             sciworld_resume_mode=settings["_sciworld_resume_mode"],
+                             sciworld_api400_backtracks=api400_backtrack_limit(settings),
+                             sciworld_first_step_400_retry_delays=settings.get(
+                                 "sciworld_first_step_400_retry_delays", API400_FIRST_STEP_RETRY_DELAYS))
+                summary = _run_task(settings["task"], settings, client, log)
                 log.finish(summary)
             print(f"Resumed and finished: {run_dir} (plot: {plot_run(run_dir)})", flush=True)
         except Exception as exc:
@@ -175,10 +216,22 @@ def main():
                     "start_index": args.start_index, "bootstrap_attempts": args.bootstrap_attempts,
                     "max_env_steps": args.max_env_steps,
                 }
+                if task == "sciworld":
+                    settings.update(sciworld_tasks=args.sciworld_tasks,
+                                    variation_idx=args.variation_idx if args.variation_idx is not None else 0,
+                                    simplifications=args.simplifications if args.simplifications is not None else "easy",
+                                    sciworld_split=args.sciworld_split,
+                                    sciworld_dependencies={p: version(p) for p in
+                                                          ("scienceworld", "sentence-transformers", "transformers", "nltk")},
+                                    sciworld_reward_policy=REWARD_POLICY,
+                                    sciworld_api400_backtracks=API400_BACKTRACK_LIMIT,
+                                    sciworld_first_step_400_retry_delays=list(API400_FIRST_STEP_RETRY_DELAYS))
+                    if args.sciworld_tasks:
+                        settings["samples"] = len(args.sciworld_tasks)
                 log = EventLog(task, model_alias, feedback, settings)
                 print(f"Starting {task} / {model_alias} / {feedback} / {args.reward_polarity}: {log.path}", flush=True)
                 try:
-                    with feedback_language(feedback):
+                    with feedback_language(feedback, empty=args.reward_polarity == "empty"):
                         log.emit("run_start", task=task, model=MODELS[model_alias], feedback=feedback)
                         summary = _run_task(task, settings, client, log)
                         log.finish(summary)

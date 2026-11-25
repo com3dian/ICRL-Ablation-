@@ -10,6 +10,7 @@ numpy==1.24.3
 
 # API
 openai==1.97.1
+python-dotenv==1.1.0
 
 # Math and utilities
 sympy==1.13.3
